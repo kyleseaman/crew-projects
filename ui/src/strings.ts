@@ -17,7 +17,10 @@ export const t = {
   prs: 'PRs',
   updated: 'Updated',
   loop: (n: string) => `Loop ${n}`,
-  loopStopped: (n: string) => `Loop ${n} · stopped`,
+  // A stopped LEAD loop says whose loop ended, so it never reads as the team
+  // having stopped while its workers are still running.
+  loopStopped: (n: string) => `Lead loop ended at ${n}`,
+  moreRepos: (n: number) => `+${n}`,
   agents: (n: number) => (n === 1 ? '1 agent' : `${n} agents`),
   active: (n: number) => `${n} active`,
   noAgents: 'No agents yet. The lead has not dispatched anyone.',

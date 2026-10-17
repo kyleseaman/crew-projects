@@ -103,7 +103,10 @@ function ProjectRow({ p, selected, onSelect }: { p: FolderProject; selected: boo
   const liveGoals = p.goals.filter(g => !g.archived)
   const reposLabel = p.needsDir
     ? t.setDirectoryTitle
-    : p.repos.map(repoName).join(' · ')
+    : p.repos.length > 1
+      // First repo plus a count, so the goals count after it never gets cut off.
+      ? `${repoName(p.repos[0])} ${t.moreRepos(p.repos.length - 1)}`
+      : p.repos.map(repoName).join('')
   const prs = dedupeProjectPrs(p.goals)
   return (
     <Clickable
