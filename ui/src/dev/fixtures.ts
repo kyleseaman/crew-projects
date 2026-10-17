@@ -13,7 +13,7 @@
  * / idle status rollups. Nothing here ships in the production bundle — this
  * module is imported only by the dev harness, never by src/App.tsx.
  */
-import type { ArchivedSession, Loop, Slot } from '../model'
+import type { ArchivedSession, Loop, SessionDoc, Slot } from '../model'
 
 /** The GET /api/chat/folders row shape (origin/main). Only the fields the app
  *  reads are typed here; a real folder carries more (color, icon, order,
@@ -272,6 +272,146 @@ export const sessionsPageFixture: { sessions: ArchivedSession[]; total: number; 
   total: sessionsFixture.length,
   has_more: false,
 }
+
+/**
+ * GET /api/artifacts?chat_folder=<folder_id> -> { artifacts }. In production the
+ * host resolves the folder subtree server-side and returns one row per artifact
+ * every chat in it touched; the app groups what comes back. The harness can't
+ * run that server resolution, so each fixture artifact carries the `folder_id`
+ * its session sits in, and the sdk-stub filters by the `chat_folder` query to
+ * mimic the server scope. `folder_id` is NOT a field the real API returns — it
+ * is a harness-only tag so the stub can scope — and the app never reads it.
+ *
+ * The parsers project (f-parsers) gets several artifacts across its goals
+ * (design docs, a report, a widget) so the Library's Artifacts section is
+ * populated; the braking project gets one; codex gets none (empty state).
+ */
+export interface LibraryArtifactFixture {
+  slug: string
+  name: string
+  kind?: string
+  source?: string
+  description?: string
+  created_at?: string
+  updated_at?: string
+  session_key?: string
+  session_title?: string
+  /** Harness-only: which folder's subtree this artifact's session sits in, so
+   *  the stub can mimic the server's `chat_folder` scope. Not a real API field. */
+  folder_id?: string
+}
+
+const artifactsFixture: LibraryArtifactFixture[] = [
+  {
+    slug: 'parser-coverage-report',
+    name: 'Parser coverage report',
+    kind: 'document',
+    source: 'chat',
+    session_key: 'W-audit',
+    session_title: 'Audit telemetry-core WASM parser',
+    updated_at: ago(20),
+    folder_id: 'f-parsers',
+  },
+  {
+    slug: 'wasm-decode-design',
+    name: 'WASM decode path design',
+    kind: 'document',
+    source: 'chat',
+    session_key: 'C-ref',
+    session_title: 'Reference parser verification',
+    updated_at: ago(35),
+    folder_id: 'f-parsers',
+  },
+  {
+    slug: 'throughput-dashboard',
+    name: 'Throughput dashboard',
+    kind: 'widget',
+    source: 'chat',
+    session_key: 'W-perf-bench',
+    session_title: 'Benchmark decode throughput',
+    updated_at: ago(6),
+    folder_id: 'f-parsers',
+  },
+  {
+    slug: 'braking-report-card',
+    name: 'Braking report card',
+    kind: 'widget',
+    source: 'chat',
+    session_key: 'W-corner',
+    session_title: 'Corner-type label coaching',
+    updated_at: ago(7),
+    folder_id: 'f-braking',
+  },
+]
+
+/** Resolve the `chat_folder`-scoped artifact listing: every artifact tagged
+ *  with the requested folder (the real server resolves the subtree; the harness
+ *  scopes on the single folder id, which is enough for the screenshot). Strips
+ *  the harness-only `folder_id` tag so the payload matches the real API shape. */
+export function artifactsForFolder(folderId: string): Array<Omit<LibraryArtifactFixture, 'folder_id'>> {
+  return artifactsFixture
+    .filter(a => a.folder_id === folderId)
+    .map(({ folder_id: _drop, ...rest }) => rest)
+}
+
+/**
+ * GET /api/artifacts/session-docs -> { docs }. The unscoped firehose: one row
+ * per distinct document path across ALL sessions (the app filters to a
+ * project's own session keys client-side). Fields mirror the real shape
+ * (`path, name, updated_at, session_key, session_title, saved, slug`).
+ *
+ * Covers: unsaved output files owned by the parsers and braking projects, a
+ * SAVED doc (must be hidden — it is surfaced as its artifact instead), and a
+ * doc owned by a session no project here owns (must be filtered out).
+ */
+export const sessionDocsFixture: SessionDoc[] = [
+  {
+    path: '/Users/kyle/Development/trackout-turbo/.artifacts/parser-audit.md',
+    name: 'parser-audit.md',
+    session_key: 'W-audit',
+    session_title: 'Audit telemetry-core WASM parser',
+    updated_at: ago(21),
+    saved: false,
+  },
+  {
+    path: '/Users/kyle/Development/trackout-turbo/bench/throughput.csv',
+    name: 'throughput.csv',
+    session_key: 'W-perf-bench',
+    session_title: 'Benchmark decode throughput',
+    updated_at: ago(5),
+    saved: false,
+  },
+  {
+    path: '/Users/kyle/Development/trackout-turbo/coaching/corner-types.md',
+    name: 'corner-types.md',
+    session_key: 'W-corner',
+    session_title: 'Corner-type label coaching',
+    updated_at: ago(6),
+    saved: false,
+  },
+  // SAVED as the parser-coverage-report artifact -> must NOT appear as a loose
+  // file (it is shown as the artifact).
+  {
+    path: '/Users/kyle/Development/trackout-turbo/.artifacts/coverage.md',
+    name: 'coverage.md',
+    session_key: 'W-audit',
+    session_title: 'Audit telemetry-core WASM parser',
+    updated_at: ago(20),
+    saved: true,
+    slug: 'parser-coverage-report',
+  },
+  // Owned by no project here (a plain ad-hoc chat) -> filtered out.
+  {
+    path: '/tmp/scratch.md',
+    name: 'scratch.md',
+    session_key: 'chat-adhoc',
+    session_title: 'Quick question',
+    updated_at: ago(90),
+    saved: false,
+  },
+]
+
+export const sessionDocsPageFixture: { docs: SessionDoc[] } = { docs: sessionDocsFixture }
 
 export const loopsFixture: Loop[] = [
   { slot_key: 'L-braking', active: true, cycle_count: 7, max_cycles: 300 },

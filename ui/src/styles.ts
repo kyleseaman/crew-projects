@@ -105,4 +105,29 @@ a.tp-chip:hover{border-color:var(--border-strong,var(--border));color:var(--text
 .tp-iconbtn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .tp-agent-fixed{align-self:flex-start}
 .tp-form-error{margin:0;color:var(--danger);font-size:13px}
+
+/* Library (artifacts + output files + de-duplicated PRs) */
+.tp-library{border-top:1px solid var(--border);padding:16px;display:flex;flex-direction:column;gap:14px}
+.tp-lib-head{display:flex;align-items:center;gap:8px;color:var(--muted)}
+.tp-lib-head .tp-h3{color:var(--text-strong,var(--card-fg,var(--text)))}
+.tp-lib-head .tp-muted{margin-left:auto;text-align:right}
+.tp-lib-group{display:flex;flex-direction:column;gap:6px}
+.tp-lib-grouphead{display:flex;align-items:center;gap:6px;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600}
+.tp-lib-grouphead .tp-muted{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:400}
+.tp-lib-list{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.tp-lib-row{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);min-width:0}
+.tp-lib-list > :last-child{border-bottom:none}
+.tp-lib-row[role=button]{cursor:pointer}
+.tp-lib-row[role=button]:hover{background:var(--bg-hover)}
+.tp-lib-row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.tp-lib-row-static{cursor:default}
+.tp-lib-ico{flex:none;color:var(--muted)}
+.tp-lib-main{min-width:0;display:flex;flex-direction:column;gap:1px;flex:1}
+.tp-lib-name{font-size:13px;font-weight:500;color:var(--text-strong,var(--text));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tp-lib-empty{margin:0;padding:2px 2px 4px}
+.tp-lib-prs{margin-top:0}
+.tp-lib-loading{display:flex;flex-direction:column;gap:8px}
+.tp-lib-skel{height:40px;border-radius:8px}
+.tp-lib-unavail{padding:12px 14px;border:1px dashed var(--border-strong,var(--border));border-radius:8px;background:var(--bg-elevated,var(--card))}
+.tp-lib-unavail-title{display:block;font-size:13px;color:var(--text-strong,var(--text))}
 `

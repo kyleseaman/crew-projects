@@ -10,7 +10,15 @@
  * a no-op that logs intent so a reviewer can see what the app asked for.
  */
 import { useEffect } from 'react'
-import { slotsFixture, autonudgeFixture, foldersFixture, sessionsPageFixture, type Folder } from './fixtures'
+import {
+  slotsFixture,
+  autonudgeFixture,
+  foldersFixture,
+  sessionsPageFixture,
+  sessionDocsPageFixture,
+  artifactsForFolder,
+  type Folder,
+} from './fixtures'
 import type { Slot } from '../model'
 
 export interface AppApi {
@@ -35,6 +43,13 @@ function route(path: string): string {
   return path.split('?')[0]
 }
 
+/** Read a query param off a stub path (no base needed — only the search part). */
+function queryParam(path: string, key: string): string {
+  const qi = path.indexOf('?')
+  if (qi < 0) return ''
+  return new URLSearchParams(path.slice(qi + 1)).get(key) ?? ''
+}
+
 function resolve<T>(path: string): T {
   switch (route(path)) {
     case '/api/chat/slots':
@@ -45,6 +60,14 @@ function resolve<T>(path: string): T {
       return foldersFixture as unknown as T
     case '/api/sessions':
       return sessionsPageFixture as unknown as T
+    case '/api/artifacts':
+      // The real host scopes by ?chat_folder (the folder subtree); the stub
+      // mimics that on the single folder id so the Library screenshot shows the
+      // selected project's artifacts only.
+      return { artifacts: artifactsForFolder(queryParam(path, 'chat_folder')) } as unknown as T
+    case '/api/artifacts/session-docs':
+      // The unscoped firehose; the app filters to the project's own sessions.
+      return sessionDocsPageFixture as unknown as T
     default:
       // eslint-disable-next-line no-console
       console.warn(`[sdk-stub] unmocked GET ${path} -> []`)
@@ -128,7 +151,7 @@ export function useAppInfo(): AppInfo {
   return {
     name: 'team-projects',
     version: '0.1.0',
-    permissions: { api: ['/api/chat/slots', '/api/chat/folders', '/api/autonudge', '/api/sessions'], events: ['slots'] },
+    permissions: { api: ['/api/chat/slots', '/api/chat/folders', '/api/autonudge', '/api/sessions', '/api/artifacts'], events: ['slots'] },
     active: true,
   }
 }

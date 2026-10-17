@@ -3,11 +3,17 @@ import {
   archivedGoalsIn,
   buildFolderProjects,
   buildProjects,
+  dedupeProjectPrs,
   folderRepos,
   loopText,
+  projectArtifacts,
+  projectOutputFiles,
+  projectSessionKeys,
   repoName,
   type ArchivedSession,
   type Folder,
+  type LibraryArtifact,
+  type SessionDoc,
   type Slot,
 } from './model'
 
@@ -245,5 +251,90 @@ describe('archivedGoalsIn', () => {
       new Set(),
     )
     expect(g.updated).toBe('')
+  })
+})
+
+// --- Library (Step 4) ------------------------------------------------------
+
+describe('projectSessionKeys', () => {
+  it('collects every goal lead, sub-team lead and worker, de-duplicated', () => {
+    const folders = [folder('f', { project_dir: '/p' })]
+    const slots = [
+      lead('L1', { folder_id: 'f' }),
+      kid('C', 'L1', { agent: 'kirocrew-conductor' }),
+      kid('W1', 'C'),
+      kid('W2', 'L1'),
+      lead('L2', { folder_id: 'f' }),
+      kid('W3', 'L2'),
+    ]
+    const [p] = buildFolderProjects(folders, slots, [])
+    expect(projectSessionKeys(p.goals).sort()).toEqual(['C', 'L1', 'L2', 'W1', 'W2', 'W3'])
+  })
+
+  it('includes an archived goal lead key', () => {
+    const folders = [folder('f', { project_dir: '/p' })]
+    const slots = [lead('L-live', { folder_id: 'f' })]
+    const sessions: ArchivedSession[] = [
+      { key: 'h-arch', agent: 'kirocrew-team-lead', folder_id: 'f', modified: 1000 },
+    ]
+    const [p] = buildFolderProjects(folders, slots, [], sessions)
+    expect(projectSessionKeys(p.goals).sort()).toEqual(['L-live', 'h-arch'])
+  })
+})
+
+describe('dedupeProjectPrs', () => {
+  it('unions each goal\'s PRs across the project, de-duplicated by url', () => {
+    const prA = { url: 'https://h/pull/1', number: 1 }
+    const prB = { url: 'https://h/pull/2', number: 2 }
+    const folders = [folder('f', { project_dir: '/p' })]
+    const slots = [
+      lead('L1', { folder_id: 'f', source_links: [prA] }),
+      kid('W1', 'L1', { source_links: [prA, prB] }), // prA shared, prB new
+      lead('L2', { folder_id: 'f', source_links: [prB] }), // prB again, different goal
+    ]
+    const [p] = buildFolderProjects(folders, slots, [])
+    expect(dedupeProjectPrs(p.goals).map(l => l.number).sort()).toEqual([1, 2])
+  })
+})
+
+describe('projectArtifacts', () => {
+  it('sorts newest-updated first and drops a slug-less row', () => {
+    const arts: LibraryArtifact[] = [
+      { slug: 'a', name: 'A', updated_at: '2026-01-01T00:00:00Z' },
+      { slug: '', name: 'ghost', updated_at: '2026-09-01T00:00:00Z' },
+      { slug: 'b', name: 'B', updated_at: '2026-06-01T00:00:00Z' },
+      { slug: 'c', name: 'C', created_at: '2026-03-01T00:00:00Z' }, // falls back to created_at
+    ]
+    expect(projectArtifacts(arts).map(a => a.slug)).toEqual(['b', 'c', 'a'])
+  })
+})
+
+describe('projectOutputFiles', () => {
+  const owned = ['L', 'W']
+
+  it('keeps unsaved docs owned by the project, newest first, de-duplicated by path', () => {
+    const docs: SessionDoc[] = [
+      { path: '/p/report.md', name: 'report.md', session_key: 'W', updated_at: '2026-01-02T00:00:00Z' },
+      { path: '/p/report.md', name: 'report.md', session_key: 'L', updated_at: '2026-01-05T00:00:00Z' }, // newer wins
+      { path: '/p/notes.txt', name: 'notes.txt', session_key: 'L', updated_at: '2026-01-03T00:00:00Z' },
+    ]
+    const out = projectOutputFiles(docs, owned)
+    expect(out.map(d => d.path)).toEqual(['L', 'W'].length ? ['/p/report.md', '/p/notes.txt'] : [])
+    expect(out[0].updated_at).toBe('2026-01-05T00:00:00Z') // the newer of the two report.md rows
+  })
+
+  it('drops a doc whose session is not owned by the project', () => {
+    const docs: SessionDoc[] = [
+      { path: '/p/foreign.md', name: 'foreign.md', session_key: 'stranger', updated_at: '2026-01-01T00:00:00Z' },
+    ]
+    expect(projectOutputFiles(docs, owned)).toEqual([])
+  })
+
+  it('drops a doc already saved as an artifact (shown as the artifact instead)', () => {
+    const docs: SessionDoc[] = [
+      { path: '/p/saved.md', name: 'saved.md', session_key: 'L', saved: true, slug: 'saved', updated_at: '2026-01-01T00:00:00Z' },
+      { path: '/p/loose.md', name: 'loose.md', session_key: 'L', updated_at: '2026-01-02T00:00:00Z' },
+    ]
+    expect(projectOutputFiles(docs, owned).map(d => d.path)).toEqual(['/p/loose.md'])
   })
 })

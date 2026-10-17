@@ -91,4 +91,27 @@ export const t = {
   setDirectoryTitle: 'No directory set',
   setDirectoryBody: 'This folder is not linked to a repository yet. Set a directory in folder settings to use it as a project.',
   setDirectory: 'Set directory',
+
+  // --- Library (Step 4): artifacts + output files + de-duplicated PRs -------
+  library: 'Library',
+  librarySubtitle: 'Files added and produced across this project, and its pull requests.',
+  libraryArtifacts: 'Artifacts',
+  libraryFiles: 'Output files',
+  libraryPrs: 'Pull requests',
+  libraryArtifactsCount: (n: number) => (n === 1 ? '1 artifact' : `${n} artifacts`),
+  libraryFilesCount: (n: number) => (n === 1 ? '1 file' : `${n} files`),
+  libraryPrsCount: (n: number) => (n === 1 ? '1 pull request' : `${n} pull requests`),
+  libraryNoArtifacts: 'No artifacts produced in this project yet.',
+  libraryNoFiles: 'No output files produced in this project yet.',
+  libraryNoPrs: 'No pull requests opened in this project yet.',
+  libraryEmpty: 'Nothing in this project’s library yet. Artifacts, output files and pull requests will appear here.',
+  /** The project's sessions carry no folder id, so the folder-scoped artifact
+   *  listing cannot be queried — the files view is unavailable, but PRs (from
+   *  the sessions themselves) still show. */
+  libraryFilesUnavailable: 'Files unavailable',
+  libraryFilesUnavailableBody: 'This project has no folder to scope its files to, so artifacts and output files can’t be listed. Pull requests still show below.',
+  /** The host returned an error for the artifact/file listing. */
+  libraryLoadError: 'Could not load this project’s files',
+  libraryBy: (title: string) => `from ${title}`,
+  openArtifact: 'Open artifact',
 }

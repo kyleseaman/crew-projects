@@ -6,9 +6,12 @@ import {
   BookText,
   ChevronDown,
   ChevronRight,
+  FileText,
   FolderGit2,
   FolderKanban,
   GitPullRequest,
+  Library,
+  Package,
   Plus,
   RefreshCw,
   Settings,
@@ -17,16 +20,23 @@ import {
 } from 'lucide-react'
 import {
   buildFolderProjects,
+  dedupeProjectPrs,
   loopText,
+  projectArtifacts,
+  projectOutputFiles,
+  projectSessionKeys,
   repoName,
   DEFAULT_PROJECT_AGENT,
   TEAM_LEAD_AGENT,
   type ArchivedSession,
+  type ArtifactsPage,
   type Folder,
   type FolderProject,
+  type LibraryArtifact,
   type Loop,
   type Member,
   type Project,
+  type SessionDoc,
   type SessionsPage,
   type Slot,
   type SourceLink,
@@ -86,7 +96,7 @@ function ProjectRow({ p, selected, onSelect }: { p: FolderProject; selected: boo
   const reposLabel = p.needsDir
     ? t.setDirectoryTitle
     : p.repos.map(repoName).join(' · ')
-  const prs = dedupePrs(p.goals)
+  const prs = dedupeProjectPrs(p.goals)
   return (
     <Clickable
       className={`tp-prow ${selected ? 'tp-prow-sel' : ''}`}
@@ -111,13 +121,6 @@ function ProjectRow({ p, selected, onSelect }: { p: FolderProject; selected: boo
       )}
     </Clickable>
   )
-}
-
-/** PRs de-duplicated across every team in a project. */
-function dedupePrs(teams: Project[]): SourceLink[] {
-  const seen = new Map<string, SourceLink>()
-  for (const team of teams) for (const l of team.prs) if (!seen.has(l.url)) seen.set(l.url, l)
-  return [...seen.values()]
 }
 
 function MemberRow({ m, role, indent, onOpen }: { m: Member; role: string; indent?: boolean; onOpen: (key: string) => void }) {
@@ -221,19 +224,163 @@ function GoalCard({ goal, loops, onOpen }: { goal: Project; loops: Loop[]; onOpe
   )
 }
 
+/** One artifact row in the Library. Opens the artifact in the host companion
+ *  via openChat with the artifact slug — the app never materializes or mutates
+ *  it, only links to it. */
+function ArtifactRow({ a, onOpen }: { a: LibraryArtifact; onOpen: (slug: string) => void }) {
+  const meta = [a.kind, a.session_title ? t.libraryBy(a.session_title) : '']
+    .filter(Boolean)
+    .join(' · ')
+  return (
+    <Clickable className="tp-lib-row" onClick={() => onOpen(a.slug)} aria-label={`${t.openArtifact}: ${a.name}`}>
+      <Package size={14} className="tp-lib-ico" aria-hidden="true" />
+      <div className="tp-lib-main">
+        <span className="tp-lib-name">{a.name}</span>
+        {meta && <span className="tp-muted tp-ellipsis">{meta}</span>}
+      </div>
+      {a.updated_at && <span className="tp-muted tp-nowrap">{when(a.updated_at)}</span>}
+    </Clickable>
+  )
+}
+
+/** One output-file row in the Library. A plain file the project's sessions
+ *  produced (not saved as an artifact); read-only — the app shows it, never
+ *  opens or materializes it. */
+function FileRow({ d }: { d: SessionDoc }) {
+  const meta = d.session_title ? t.libraryBy(d.session_title) : ''
+  return (
+    <div className="tp-lib-row tp-lib-row-static">
+      <FileText size={14} className="tp-lib-ico" aria-hidden="true" />
+      <div className="tp-lib-main">
+        <span className="tp-lib-name" title={d.path}>{d.name}</span>
+        {meta && <span className="tp-muted tp-ellipsis">{meta}</span>}
+      </div>
+      {d.updated_at && <span className="tp-muted tp-nowrap">{when(d.updated_at)}</span>}
+    </div>
+  )
+}
+
+/** The project's Library: artifacts and output files produced across its
+ *  sessions, plus de-duplicated PRs. Artifacts/files come from the host via
+ *  `chat_folder`-scoped and all-sessions queries respectively, filtered to the
+ *  project's own sessions; the PRs come from the goals the project already
+ *  carries. When the project has no folder (so the folder-scoped artifact
+ *  listing can't be queried), the files view degrades to an unavailable state
+ *  and the PRs still show. */
+function LibrarySection({
+  prs,
+  artifacts,
+  files,
+  filesAvailable,
+  loading,
+  error,
+  onOpenArtifact,
+}: {
+  prs: SourceLink[]
+  artifacts: LibraryArtifact[]
+  files: SessionDoc[]
+  filesAvailable: boolean
+  loading: boolean
+  error: string
+  onOpenArtifact: (slug: string) => void
+}) {
+  const hasAnything = prs.length > 0 || artifacts.length > 0 || files.length > 0
+
+  return (
+    <section className="tp-library" aria-label={t.library}>
+      <div className="tp-lib-head">
+        <Library size={14} aria-hidden="true" />
+        <h3 className="tp-h3">{t.library}</h3>
+        <span className="tp-muted">{t.librarySubtitle}</span>
+      </div>
+
+      {/* Files view: artifacts + output files. Unavailable when the project has
+          no folder to scope the listing to; the host error degrades the same
+          way, with the deduped PRs still shown below. */}
+      {!filesAvailable ? (
+        <div className="tp-lib-unavail" role="note">
+          <strong className="tp-lib-unavail-title">{t.libraryFilesUnavailable}</strong>
+          <p className="tp-muted">{t.libraryFilesUnavailableBody}</p>
+        </div>
+      ) : error ? (
+        <div className="tp-lib-unavail" role="note">
+          <strong className="tp-lib-unavail-title">{t.libraryLoadError}</strong>
+          <p className="tp-muted">{error}</p>
+        </div>
+      ) : loading ? (
+        <div className="tp-lib-loading"><Skeleton className="tp-lib-skel" /><Skeleton className="tp-lib-skel" /></div>
+      ) : (
+        <>
+          <div className="tp-lib-group">
+            <div className="tp-lib-grouphead">
+              <Package size={12} aria-hidden="true" /> {t.libraryArtifacts}
+              <span className="tp-muted">{t.libraryArtifactsCount(artifacts.length)}</span>
+            </div>
+            {artifacts.length === 0 ? (
+              <p className="tp-muted tp-lib-empty">{t.libraryNoArtifacts}</p>
+            ) : (
+              <div className="tp-lib-list" role="list">
+                {artifacts.map(a => <ArtifactRow key={a.slug} a={a} onOpen={onOpenArtifact} />)}
+              </div>
+            )}
+          </div>
+
+          <div className="tp-lib-group">
+            <div className="tp-lib-grouphead">
+              <FileText size={12} aria-hidden="true" /> {t.libraryFiles}
+              <span className="tp-muted">{t.libraryFilesCount(files.length)}</span>
+            </div>
+            {files.length === 0 ? (
+              <p className="tp-muted tp-lib-empty">{t.libraryNoFiles}</p>
+            ) : (
+              <div className="tp-lib-list" role="list">
+                {files.map(d => <FileRow key={d.path} d={d} />)}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* PRs always show — they come from the project's own sessions, so they
+          survive the files-unavailable degrade. */}
+      <div className="tp-lib-group">
+        <div className="tp-lib-grouphead">
+          <GitPullRequest size={12} aria-hidden="true" /> {t.libraryPrs}
+          <span className="tp-muted">{t.libraryPrsCount(prs.length)}</span>
+        </div>
+        {prs.length === 0 ? (
+          <p className="tp-muted tp-lib-empty">{t.libraryNoPrs}</p>
+        ) : (
+          <div className="tp-chips tp-lib-prs">
+            {prs.map(l => <PrChip key={l.url} link={l} />)}
+          </div>
+        )}
+      </div>
+
+      {filesAvailable && !loading && !error && !hasAnything && (
+        <p className="tp-muted tp-lib-empty">{t.libraryEmpty}</p>
+      )}
+    </section>
+  )
+}
+
 /** The project page: the folder header (repos, default agent, read-only
  *  instructions + a settings link, or a Set-directory prompt), then every
- *  team rollup attached to the project. */
+ *  team rollup attached to the project, and the project's Library. */
 function ProjectPage({
   p,
   loops,
+  library,
   onOpen,
+  onOpenArtifact,
   onNewGoal,
   onSettings,
 }: {
   p: FolderProject
   loops: Loop[]
+  library: LibraryData
   onOpen: (key: string) => void
+  onOpenArtifact: (slug: string) => void
   onNewGoal: (p: FolderProject) => void
   onSettings: (p: FolderProject) => void
 }) {
@@ -327,8 +474,31 @@ function ProjectPage({
           )}
         </div>
       )}
+
+      <LibrarySection
+        prs={library.prs}
+        artifacts={library.artifacts}
+        files={library.files}
+        filesAvailable={library.filesAvailable}
+        loading={library.loading}
+        error={library.error}
+        onOpenArtifact={onOpenArtifact}
+      />
     </div>
   )
+}
+
+/** Everything the Library section needs for one project, derived in the
+ *  top-level component from the host queries. */
+interface LibraryData {
+  prs: SourceLink[]
+  artifacts: LibraryArtifact[]
+  files: SessionDoc[]
+  /** False when the project has no folder id to scope the artifact listing to
+   *  — the files view then shows its unavailable state. */
+  filesAvailable: boolean
+  loading: boolean
+  error: string
 }
 
 interface NewProjectResult {
@@ -468,6 +638,17 @@ export default function TeamProjects() {
     queryFn: () => api.get<SessionsPage>('/api/sessions?limit=200'),
     refetchInterval: visible ? POLL_MS * 4 : false,
   })
+  // Output files across EVERY session (the host's session-docs firehose; no
+  // ?session scope). Filtered to the selected project's own sessions in the
+  // client via projectSessionKeys — the endpoint has no folder scope, so one
+  // unscoped fetch + a client filter is cheaper than one call per session.
+  // Polled on the slow cadence: a document file changes only when an agent
+  // writes one, not every turn.
+  const docsQ = useQuery({
+    queryKey: ['team-projects', 'session-docs'],
+    queryFn: () => api.get<{ docs: SessionDoc[] }>('/api/artifacts/session-docs'),
+    refetchInterval: visible ? POLL_MS * 4 : false,
+  })
   // A slots push is a cheap hint to refresh sooner than the poll.
   useAppEvents('slots', () => {
     void slotsQ.refetch()
@@ -523,7 +704,48 @@ export default function TeamProjects() {
   }, [projects, filter])
   const current = shown.find(p => p.folder.id === selected) ?? shown[0] ?? null
 
+  // Library artifacts for the CURRENT project: the host resolves the folder
+  // subtree server-side from ?chat_folder, returning every artifact its chats
+  // (open or archived) touched. Keyed by the folder id so switching projects
+  // refetches; disabled when there is no project selected. A project with a
+  // folder id always has one here (projects ARE folders), so the only
+  // unavailable path is a defensive empty id.
+  const currentFolderId = current?.folder.id ?? ''
+  const artifactsQ = useQuery({
+    queryKey: ['team-projects', 'artifacts', currentFolderId],
+    queryFn: () =>
+      api.get<ArtifactsPage>(`/api/artifacts?chat_folder=${encodeURIComponent(currentFolderId)}`),
+    enabled: visible && currentFolderId !== '',
+    refetchInterval: visible ? POLL_MS * 4 : false,
+  })
+
+  const library: LibraryData = useMemo(() => {
+    if (!current) {
+      return { prs: [], artifacts: [], files: [], filesAvailable: false, loading: false, error: '' }
+    }
+    const ownedKeys = projectSessionKeys(current.goals)
+    const prs = dedupeProjectPrs(current.goals)
+    const filesAvailable = currentFolderId !== ''
+    const allDocs = Array.isArray(docsQ.data?.docs) ? (docsQ.data as { docs: SessionDoc[] }).docs : []
+    const allArtifacts = Array.isArray(artifactsQ.data?.artifacts)
+      ? (artifactsQ.data as ArtifactsPage).artifacts
+      : []
+    const err = artifactsQ.error || docsQ.error
+    return {
+      prs,
+      artifacts: projectArtifacts(allArtifacts),
+      files: projectOutputFiles(allDocs, ownedKeys),
+      filesAvailable,
+      loading: filesAvailable && (artifactsQ.isLoading || docsQ.isLoading),
+      error: err ? String((err as Error).message || err) : '',
+    }
+  }, [current, currentFolderId, artifactsQ.data, artifactsQ.error, artifactsQ.isLoading, docsQ.data, docsQ.error, docsQ.isLoading])
+
   const openSession = (slotKey: string) => openChat({ slotKey })
+  // Open an artifact at the host's read-only detail page (/artifacts/<slug>).
+  // The app only LINKS to it — it never materializes, mutates or re-files it,
+  // and sends no message.
+  const openArtifact = (slug: string) => navigate(`/artifacts/${encodeURIComponent(slug)}`)
 
   // New goal: an UNSENT draft team-lead session filed in the project's folder.
   // openChat alone cannot do this — ChatLaunchOptions carries no folder — so we
@@ -601,7 +823,9 @@ export default function TeamProjects() {
                   key={current.folder.id}
                   p={current}
                   loops={loops}
+                  library={library}
                   onOpen={openSession}
+                  onOpenArtifact={openArtifact}
                   onNewGoal={openNewGoal}
                   onSettings={openSettings}
                 />

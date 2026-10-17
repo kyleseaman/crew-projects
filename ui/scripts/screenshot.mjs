@@ -52,6 +52,21 @@ const VIEWS = [
     height: 900,
     prepare: async page => clickProjectByName(page, 'Mobile companion app'),
   },
+  // The per-project LIBRARY: artifacts and output files produced across the
+  // project's sessions, plus de-duplicated PRs. Selects the parsers project
+  // (several artifacts, output files and PRs) and scrolls the Library into view.
+  {
+    name: 'project-library',
+    width: 1280,
+    height: 1200,
+    prepare: async page => {
+      await clickProjectByName(page, 'Verify telemetry parsers')
+      const lib = page.locator('.tp-library').first()
+      await lib.waitFor({ timeout: 10_000 })
+      await lib.scrollIntoViewIfNeeded()
+      await page.waitForTimeout(250)
+    },
+  },
   // The New-project flow: name, one-or-more directories, fixed default agent.
   {
     name: 'new-project-dialog',

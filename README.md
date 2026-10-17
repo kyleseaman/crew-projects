@@ -61,6 +61,34 @@ core files the slot into the folder at birth without sending anything — then
 navigates into that empty session. The person types and sends the first turn.
 This is the app creating a brand-new slot; it never re-files an existing one.
 
+## Library
+
+Below the goals, each project has a **Library** — the files added and produced
+across the project's sessions, plus its pull requests. "The project's sessions"
+means every session the project owns: each goal's lead and all its sub-leads and
+workers (and the archived goals' leads), derived from the goals the folder
+already carries (`projectSessionKeys`). Three sections:
+
+- **Artifacts** — `GET /api/artifacts?chat_folder=<folder_id>` lists every
+  artifact touched by a chat filed in the project's folder subtree (open or
+  archived); the host resolves the subtree server-side, so the app passes the
+  project's `folder.id` and groups what comes back. Each row shows the artifact
+  name, its kind, the session it came from, and when it changed, newest first.
+  A row links to the host's read-only artifact page (`/artifacts/<slug>`) — the
+  app never materializes, mutates or re-files an artifact.
+- **Output files** — `GET /api/artifacts/session-docs` (the unscoped firehose of
+  non-code document files produced across all sessions) filtered to the
+  project's own sessions client-side, de-duplicated by path. A file already
+  saved as an artifact is **not** re-listed here (it appears as its artifact);
+  these are the loose outputs.
+- **Pull requests** — de-duplicated across every goal in the project
+  (`dedupeProjectPrs`), reusing each goal's already-deduped `source_links`.
+
+The Library degrades gracefully: the artifacts/files views need the project's
+folder id to scope to, so a project with no folder shows a **Files unavailable**
+note while its pull requests (which come from the sessions themselves) still
+show. A host listing error degrades the same way.
+
 ## Build and install
 
 ```bash
@@ -86,15 +114,19 @@ npm run screenshot   # build the harness and write PNGs to ../screenshots/
   fixtures by path; the UI components mirror the host design system on the same
   theme tokens.
 - `src/dev/fixtures.ts` mirrors the real `/api/chat/slots`, `/api/autonudge`,
-  `/api/chat/folders` and `/api/sessions` payload shapes: multiple project
-  folders (one multi-repo with `extra_repos` and read-only `steering_dirs`, one
-  single-repo, one with no `project_dir` for the Set-directory prompt, plus a
-  nested sub-folder), **two live goals in one project** (each with its own
+  `/api/chat/folders`, `/api/sessions`, `/api/artifacts` and
+  `/api/artifacts/session-docs` payload shapes: multiple project folders (one
+  multi-repo with `extra_repos` and read-only `steering_dirs`, one single-repo,
+  one with no `project_dir` for the Set-directory prompt, plus a nested
+  sub-folder), **two live goals in one project** (each with its own
   sub-team/worker rollup), **archived goals** (team-lead history sessions,
   including rows that must be ignored: a non-lead chat, an already-live goal,
   and an unfiled lead), direct workers, active and stopped loops, de-duplicated
-  PRs across every CI state, and each `needs_you` / `stalled` / `working` /
-  `idle` rollup.
+  PRs across every CI state, each `needs_you` / `stalled` / `working` / `idle`
+  rollup, and a **Library** (artifacts tagged per folder so the stub mimics the
+  host's `chat_folder` scope, output files including a saved doc that must be
+  hidden and a foreign doc that must be filtered out, and the project's deduped
+  PRs).
 - `vite.dev.config.ts` serves `index.html` → `src/dev/harness.tsx` and aliases
   the two SDK specifiers to the stubs. It writes its build to `dist-dev/`.
 - `scripts/screenshot.mjs` builds the harness, serves it with Vite preview, and
@@ -103,7 +135,8 @@ npm run screenshot   # build the harness and write PNGs to ../screenshots/
   the New-project dialog) before the capture. Add views as later steps land.
   Current captures: `projects-overview`, `projects-overview-narrow`,
   `project-goals` (a project's live + archived goals, each with its rollup),
-  `project-single-repo`, `project-set-directory`, `new-project-dialog`.
+  `project-single-repo`, `project-set-directory`, `project-library` (a
+  project's artifacts, output files and de-duplicated PRs), `new-project-dialog`.
 
 The harness is dev-only. `npm run build` uses `vite.config.ts` (library mode,
 entry `src/App.tsx`) and never imports anything under `src/dev/`, so the shipped

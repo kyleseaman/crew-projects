@@ -281,6 +281,132 @@ export function archivedGoalsIn(
 }
 
 /* ---------------------------------------------------------------------------
+ * Library — a project's artifacts, output files and de-duplicated PRs.
+ *
+ * Two host listing endpoints feed it (both on origin/main):
+ *
+ *   GET /api/artifacts?chat_folder=<folder_id>
+ *     Every artifact TOUCHED by a chat filed in the folder's subtree (open or
+ *     archived), already resolved server-side from the folder id. One row per
+ *     artifact carrying { slug, name, kind, source, description, created_at,
+ *     updated_at, session_key, session_title }. The server scopes it to the
+ *     project's folder, so the app passes the project's `folder.id` and groups
+ *     what comes back — it does NOT re-filter by session.
+ *
+ *   GET /api/artifacts/session-docs?session=<session_key>
+ *     Non-code DOCUMENT files a session produced (file_changes), one row per
+ *     distinct path: { path, name, updated_at, session_key, session_title,
+ *     message_ts, saved, slug }. Scoped to ONE session only — the app fetches
+ *     it per session the project owns and merges the results, de-duplicating by
+ *     path (an `artifact` and its backing `output file` are shown once each).
+ *
+ * A project owns an artifact/doc when its session belongs to the project — the
+ * project's goals plus every sub-team/worker under them (and its archived goal
+ * leads). `projectSessionKeys` derives exactly that set from the goals the
+ * folder already carries, so the app never guesses membership.
+ * ------------------------------------------------------------------------- */
+
+/** One row from `GET /api/artifacts` (`{ artifacts: [...] }`). Only the fields
+ *  this app reads are typed; a row carries more (tags, folder, pinned, sharing,
+ *  version info) the Library ignores. */
+export interface LibraryArtifact {
+  slug: string
+  name: string
+  kind?: string
+  source?: string
+  description?: string
+  created_at?: string
+  updated_at?: string
+  session_key?: string
+  session_title?: string
+}
+
+/** The `GET /api/artifacts` envelope. */
+export interface ArtifactsPage {
+  artifacts: LibraryArtifact[]
+}
+
+/** One row from `GET /api/artifacts/session-docs` (`{ docs: [...] }`): a
+ *  non-code document file a session wrote. */
+export interface SessionDoc {
+  path: string
+  name: string
+  updated_at?: string
+  session_key?: string
+  session_title?: string
+  message_ts?: string
+  /** True when this file already backs a materialized artifact — then it is
+   *  surfaced as that artifact, not a second time as a loose output file. */
+  saved?: boolean
+  slug?: string
+}
+
+/** Every session key a project owns: each goal's lead plus every sub-team lead
+ *  and worker under it (live goals carry a full rollup; an archived goal carries
+ *  only its lead). De-duplicated, stable order. This is the per-goal membership
+ *  the Library attributes artifacts and output files by — reused from the goals
+ *  already built for the project, never re-derived from the raw session list. */
+export function projectSessionKeys(goals: Project[]): string[] {
+  const keys: string[] = []
+  const add = (k: string | undefined) => {
+    const v = (k || '').trim()
+    if (v && !keys.includes(v)) keys.push(v)
+  }
+  for (const goal of goals) {
+    add(goal.lead.slot.key)
+    for (const sub of goal.subTeams) {
+      add(sub.lead.slot.key)
+      for (const w of sub.workers) add(w.slot.key)
+    }
+    for (const w of goal.workers) add(w.slot.key)
+  }
+  return keys
+}
+
+/** PRs de-duplicated across every goal in a project, by URL. Each `Project`
+ *  already de-dupes its own members' change links into `prs`; this unions them
+ *  across the project's goals so the Library shows one chip per distinct PR. */
+export function dedupeProjectPrs(goals: Project[]): SourceLink[] {
+  const seen = new Map<string, SourceLink>()
+  for (const goal of goals) {
+    for (const l of goal.prs) if (!seen.has(l.url)) seen.set(l.url, l)
+  }
+  return [...seen.values()]
+}
+
+/** The output FILES a project owns: session-docs whose session belongs to the
+ *  project, that are NOT already saved as an artifact (a saved doc is shown as
+ *  its artifact instead, so it is not double-listed), de-duplicated by path and
+ *  newest first. `ownedKeys` is `projectSessionKeys(goals)`. */
+export function projectOutputFiles(docs: SessionDoc[], ownedKeys: string[]): SessionDoc[] {
+  const owned = new Set(ownedKeys)
+  const byPath = new Map<string, SessionDoc>()
+  for (const d of docs) {
+    if (d.saved) continue // surfaced as its artifact, not a loose file
+    const key = (d.session_key || '').trim()
+    if (!owned.has(key)) continue
+    const path = (d.path || '').trim()
+    if (!path) continue
+    const prev = byPath.get(path)
+    // Newest write of a path wins (session-docs is already newest-first within
+    // one session, but merging several sessions can reorder).
+    if (!prev || (d.updated_at || '') > (prev.updated_at || '')) byPath.set(path, d)
+  }
+  return [...byPath.values()].sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''))
+}
+
+/** The ARTIFACTS a project owns, newest-updated first. The `chat_folder` query
+ *  already scopes the listing to the project's folder subtree server-side, so
+ *  this only sorts (and defensively drops a row with no slug). Kept a function
+ *  so the ordering is one tested place. */
+export function projectArtifacts(artifacts: LibraryArtifact[]): LibraryArtifact[] {
+  return artifacts
+    .filter(a => (a.slug || '').trim() !== '')
+    .slice()
+    .sort((a, b) => (b.updated_at || b.created_at || '').localeCompare(a.updated_at || a.created_at || ''))
+}
+
+/* ---------------------------------------------------------------------------
  * Projects = folders.
  *
  * A project is a sidebar FOLDER (GET /api/chat/folders). The folder carries the
