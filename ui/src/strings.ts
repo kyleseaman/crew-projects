@@ -114,4 +114,26 @@ export const t = {
   libraryLoadError: 'Could not load this project’s files',
   libraryBy: (title: string) => `from ${title}`,
   openArtifact: 'Open artifact',
+
+  // --- Waiting-on-you inbox (Step 5): cross-project roll-up at top of page ---
+  inboxTitle: 'Waiting on you',
+  /** The count line beside the inbox title: how many sessions need you. */
+  inboxCount: (n: number) => (n === 1 ? '1 session needs you' : `${n} sessions need you`),
+  /** The calm empty state — shown compact at the top, not an error. */
+  inboxEmpty: 'Nothing is waiting on you.',
+  inboxEmptyHint: 'Sessions that need a decision, an approval, or a resume will show up here.',
+  /** What each inbox row is waiting for, by kind. */
+  inboxWaiting: {
+    approval: 'Waiting for your approval',
+    needs_input: 'Waiting for your input',
+    stalled: 'Stalled — waiting for a resume',
+  },
+  /** The badge on an inbox row, by kind. */
+  inboxBadge: {
+    approval: 'Approval',
+    needs_input: 'Needs you',
+    stalled: 'Stalled',
+  },
+  /** The accessible label for an inbox row's open action: project · session. */
+  inboxOpen: (project: string, session: string) => `Open ${session} in ${project}`,
 }

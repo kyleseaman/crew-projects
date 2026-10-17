@@ -3,14 +3,19 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAppApi, useAppEvents, useAppInfo, useChatLauncher, useNavigate, fmtRelative } from '@kirocrew/app-sdk'
 import { Badge, Btn, Clickable, EmptyState, ErrorNotice, PageHeader, SearchInput, Skeleton } from '@kirocrew/app-sdk/ui'
 import {
+  BellRing,
   BookText,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
+  CircleHelp,
   FileText,
   FolderGit2,
   FolderKanban,
   GitPullRequest,
+  Inbox,
   Library,
+  PauseCircle,
   Package,
   Plus,
   RefreshCw,
@@ -20,6 +25,7 @@ import {
 } from 'lucide-react'
 import {
   buildFolderProjects,
+  buildInbox,
   dedupeProjectPrs,
   loopText,
   projectArtifacts,
@@ -32,6 +38,8 @@ import {
   type ArtifactsPage,
   type Folder,
   type FolderProject,
+  type InboxItem,
+  type InboxKind,
   type LibraryArtifact,
   type Loop,
   type Member,
@@ -600,6 +608,74 @@ function NewProjectDialog({
   )
 }
 
+/** The icon and badge variant for each inbox kind. A pending approval and a
+ *  needs-input both use the warm `warn` token (a decision the person owes); a
+ *  stalled session uses the `err` token (something stopped). */
+const INBOX_KIND: Record<InboxKind, { Icon: typeof BellRing; variant: 'warn' | 'err' }> = {
+  approval: { Icon: BellRing, variant: 'warn' },
+  needs_input: { Icon: CircleHelp, variant: 'warn' },
+  stalled: { Icon: PauseCircle, variant: 'err' },
+}
+
+/** One row in the Waiting-on-you inbox: the project it belongs to, the session
+ *  and what it waits for, opening that session on click. */
+function InboxRow({ item, onOpen }: { item: InboxItem; onOpen: (key: string) => void }) {
+  const { Icon, variant } = INBOX_KIND[item.kind]
+  return (
+    <Clickable
+      className={`tp-inbox-row tp-inbox-${item.kind}`}
+      onClick={() => onOpen(item.slotKey)}
+      aria-label={t.inboxOpen(item.projectName, item.sessionTitle || t.untitled)}
+    >
+      <Icon size={15} className="tp-inbox-ico" aria-hidden="true" />
+      <div className="tp-inbox-main">
+        <div className="tp-row-top">
+          <span className="tp-inbox-session">{item.sessionTitle || t.untitled}</span>
+          <Badge variant={variant}>{t.inboxBadge[item.kind]}</Badge>
+        </div>
+        <div className="tp-muted tp-ellipsis">
+          {item.projectName} · {t.inboxWaiting[item.kind]}
+        </div>
+        {item.lastMessage && <div className="tp-muted tp-ellipsis tp-inbox-msg">{item.lastMessage}</div>}
+      </div>
+      {item.updated && <span className="tp-muted tp-nowrap">{when(item.updated)}</span>}
+    </Clickable>
+  )
+}
+
+/** The Waiting-on-you inbox: a cross-project roll-up of every session that
+ *  needs the person, rendered at the TOP of the page. Compact when empty (a
+ *  calm one-line note, not an error, and it does not push the page down). */
+function InboxBar({ items, onOpen }: { items: InboxItem[]; onOpen: (key: string) => void }) {
+  if (items.length === 0) {
+    return (
+      <section className="tp-inbox tp-inbox-empty" aria-label={t.inboxTitle}>
+        <CheckCircle2 size={15} className="tp-inbox-empty-ico" aria-hidden="true" />
+        <div className="tp-inbox-empty-body">
+          <span className="tp-inbox-empty-title">{t.inboxEmpty}</span>
+          <span className="tp-muted">{t.inboxEmptyHint}</span>
+        </div>
+      </section>
+    )
+  }
+  return (
+    <section className="tp-inbox" aria-label={t.inboxTitle}>
+      <div className="tp-inbox-head">
+        <Inbox size={15} aria-hidden="true" />
+        <h2 className="tp-inbox-title">{t.inboxTitle}</h2>
+        <span className="tp-muted">{t.inboxCount(items.length)}</span>
+      </div>
+      <div className="tp-inbox-list" role="list">
+        {items.map(item => (
+          <div role="listitem" key={item.slotKey}>
+            <InboxRow item={item} onOpen={onOpen} />
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 export default function TeamProjects() {
   const api = useAppApi()
   const qc = useQueryClient()
@@ -703,6 +779,10 @@ export default function TeamProjects() {
     )
   }, [projects, filter])
   const current = shown.find(p => p.folder.id === selected) ?? shown[0] ?? null
+  // The Waiting-on-you inbox rolls up EVERY project (not the filtered list) —
+  // what needs you must not be hidden by a search filter. Built from the same
+  // projects, so a session enters it exactly once.
+  const inbox = useMemo(() => buildInbox(projects), [projects])
 
   // Library artifacts for the CURRENT project: the host resolves the folder
   // subtree server-side from ?chat_folder, returning every artifact its chats
@@ -804,6 +884,8 @@ export default function TeamProjects() {
             action={<Btn primary onClick={() => { setCreateError(''); setCreating(true) }}>{t.newProjectTitle}</Btn>}
           />
         ) : (
+          <>
+          <InboxBar items={inbox} onOpen={openSession} />
           <div className="tp-split">
             <aside className="tp-list" aria-label={t.projects}>
               <SearchInput value={filter} onChange={e => setFilter(e.target.value)} placeholder={t.searchProjects} aria-label={t.searchProjects} />
@@ -834,6 +916,7 @@ export default function TeamProjects() {
               )}
             </main>
           </div>
+          </>
         )}
       </div>
 

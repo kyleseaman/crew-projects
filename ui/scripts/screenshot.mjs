@@ -80,6 +80,32 @@ const VIEWS = [
       await page.waitForTimeout(150)
     },
   },
+  // The Waiting-on-you inbox at the TOP of the page, POPULATED: a pending
+  // approval (parsers), a needs-input question and a stalled session (braking),
+  // rolled up across projects. Captured from the overview so the inbox sits
+  // above the project list, as it renders in the app.
+  {
+    name: 'waiting-on-you',
+    width: 1280,
+    height: 1000,
+    prepare: async page => {
+      await page.waitForSelector('.tp-inbox-list', { timeout: 10_000 })
+      await page.waitForTimeout(200)
+    },
+  },
+  // The inbox's CALM empty state. The harness `?empty=1` mode serves the
+  // no-waiting slot list, so nothing needs the person and the inbox collapses
+  // to its one-line reassurance (not an error) without pushing the page down.
+  {
+    name: 'waiting-on-you-empty',
+    width: 1280,
+    height: 900,
+    query: '?empty=1',
+    prepare: async page => {
+      await page.waitForSelector('.tp-inbox-empty', { timeout: 10_000 })
+      await page.waitForTimeout(200)
+    },
+  },
 ]
 
 /** Click the project row whose title matches `name`. */
@@ -109,7 +135,7 @@ async function main() {
         viewport: { width: view.width, height: view.height },
         deviceScaleFactor: 2,
       })
-      await page.goto(url, { waitUntil: 'networkidle' })
+      await page.goto(`${url}${view.query ?? ''}`, { waitUntil: 'networkidle' })
       // Let the first React Query fetch resolve and the list paint.
       await page.waitForSelector('.tp-root', { timeout: 10_000 })
       await page.waitForTimeout(400)

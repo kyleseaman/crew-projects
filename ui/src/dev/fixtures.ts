@@ -174,6 +174,18 @@ const brakingProject: Slot[] = [
     last_activity_ts: ago(31),
     last_message: 'Interrupted mid-run; awaiting a resume.',
   },
+  // A worker that asked a question and is waiting on the person's answer
+  // (needs_input, not a tool approval) — gives the inbox its third kind.
+  {
+    key: 'W-lines',
+    agent: 'kirocrew-worker',
+    created_by: 'L-braking',
+    title: 'Coaching-line kinds',
+    needs_input: true,
+    last_activity_ts: ago(12),
+    last_message: 'Two schemas fit the report card — which should I use?',
+    source_links: [PR(4522, { ci: 'running' })],
+  },
   {
     key: 'W-presets',
     agent: 'kirocrew-worker',
@@ -216,6 +228,19 @@ export const slotsFixture: Slot[] = [
   ...codexProject,
   ...noise,
 ]
+
+/** A variant of the slot list with NOTHING waiting on the person: every
+ *  pending_approval / needs_input / interrupted flag cleared (a waiting session
+ *  becomes running instead, so the projects still show as active). Used only by
+ *  the dev harness's `?empty=1` mode to screenshot the inbox's calm empty
+ *  state — the projects themselves are unchanged, only their statuses differ. */
+export const slotsNoWaitingFixture: Slot[] = slotsFixture.map(s => {
+  if (s.pending_approval || s.needs_input || s.interrupted) {
+    const { pending_approval: _a, needs_input: _i, interrupted: _t, ...rest } = s
+    return { ...rest, running: true }
+  }
+  return s
+})
 
 /**
  * GET /api/sessions -> { sessions, total, has_more }. One row per session file

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   archivedGoalsIn,
   buildFolderProjects,
+  buildInbox,
   buildProjects,
   dedupeProjectPrs,
   folderRepos,
@@ -336,5 +337,77 @@ describe('projectOutputFiles', () => {
       { path: '/p/loose.md', name: 'loose.md', session_key: 'L', updated_at: '2026-01-02T00:00:00Z' },
     ]
     expect(projectOutputFiles(docs, owned).map(d => d.path)).toEqual(['/p/loose.md'])
+  })
+})
+
+// --- Waiting-on-you inbox (Step 5) -----------------------------------------
+
+describe('buildInbox', () => {
+  it('rolls up needs_you and stalled sessions across projects, approvals first', () => {
+    const folders = [
+      folder('f-a', { project_dir: '/a' }),
+      folder('f-b', { project_dir: '/b' }),
+    ]
+    const slots = [
+      lead('L-a', { folder_id: 'f-a', last_activity_ts: '2026-01-01T00:00:00Z' }),
+      // worker waiting on an approval (most acute)
+      kid('W-approve', 'L-a', { pending_approval: true, last_activity_ts: '2026-01-02T00:00:00Z', last_message: 'force-push the fixup?' }),
+      // a stalled worker in project A
+      kid('W-stall', 'L-a', { interrupted: true, last_activity_ts: '2026-01-05T00:00:00Z' }),
+      // lead in project B needing input
+      lead('L-b', { folder_id: 'f-b', needs_input: true, last_activity_ts: '2026-01-03T00:00:00Z' }),
+      // a working session — must NOT enter the inbox
+      kid('W-busy', 'L-b', { running: true, last_activity_ts: '2026-01-09T00:00:00Z' }),
+    ]
+    const projects = buildFolderProjects(folders, slots, [])
+    const inbox = buildInbox(projects)
+    expect(inbox.map(i => i.slotKey)).toEqual(['W-approve', 'L-b', 'W-stall'])
+    expect(inbox.map(i => i.kind)).toEqual(['approval', 'needs_input', 'stalled'])
+    expect(inbox[0].projectName).toBe('f-a')
+    expect(inbox[1].projectName).toBe('f-b')
+    expect(inbox[0].lastMessage).toBe('force-push the fixup?')
+    expect(inbox.some(i => i.slotKey === 'W-busy')).toBe(false)
+  })
+
+  it('sorts within one kind by most recent activity', () => {
+    const folders = [folder('f', { project_dir: '/p' })]
+    const slots = [
+      lead('L', { folder_id: 'f' }),
+      kid('W-old', 'L', { interrupted: true, last_activity_ts: '2026-01-01T00:00:00Z' }),
+      kid('W-new', 'L', { interrupted: true, last_activity_ts: '2026-01-09T00:00:00Z' }),
+    ]
+    const inbox = buildInbox(buildFolderProjects(folders, slots, []))
+    expect(inbox.map(i => i.slotKey)).toEqual(['W-new', 'W-old'])
+  })
+
+  it('prefers approval over needs_input when a slot carries both flags', () => {
+    const folders = [folder('f', { project_dir: '/p' })]
+    const slots = [lead('L', { folder_id: 'f', pending_approval: true, needs_input: true })]
+    const [item] = buildInbox(buildFolderProjects(folders, slots, []))
+    expect(item.kind).toBe('approval')
+  })
+
+  it('never includes an archived goal (idle by construction)', () => {
+    const folders = [folder('f', { project_dir: '/p' })]
+    const slots = [lead('L-live', { folder_id: 'f' })]
+    const sessions: ArchivedSession[] = [
+      { key: 'h', title: 'done goal', agent: 'kirocrew-team-lead', folder_id: 'f', modified: 1000 },
+    ]
+    expect(buildInbox(buildFolderProjects(folders, slots, [], sessions))).toEqual([])
+  })
+
+  it('returns an empty inbox when nothing needs the person', () => {
+    const folders = [folder('f', { project_dir: '/p' })]
+    const slots = [lead('L', { folder_id: 'f' }), kid('W', 'L', { running: true })]
+    expect(buildInbox(buildFolderProjects(folders, slots, []))).toEqual([])
+  })
+
+  it('attributes a session filed in a nested sub-folder to its top-level project', () => {
+    const folders = [folder('f', { name: 'Parent', project_dir: '/p' }), folder('f-sub', { parent_id: 'f' })]
+    const slots = [lead('L', { folder_id: 'f-sub' }), kid('W', 'L', { pending_approval: true })]
+    const [item] = buildInbox(buildFolderProjects(folders, slots, []))
+    expect(item.slotKey).toBe('W')
+    expect(item.projectName).toBe('Parent')
+    expect(item.projectId).toBe('f')
   })
 })

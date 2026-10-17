@@ -590,3 +590,105 @@ export function buildFolderProjects(
       a.folder.name.localeCompare(b.folder.name),
   )
 }
+
+/* ---------------------------------------------------------------------------
+ * Waiting-on-you inbox.
+ *
+ * The cross-project roll-up of every session that needs the PERSON: the
+ * `needs_you` sessions (pending approval || needs input) and the `stalled`
+ * ones (interrupted), across every project. A pending approval is surfaced
+ * explicitly as its own kind so the inbox can say WHY a session needs you, not
+ * just that it does. `working` and `idle` sessions never enter the inbox —
+ * they need no one.
+ *
+ * The roll-up reuses the projects already built (`buildFolderProjects`), so a
+ * session enters the inbox exactly once, attributed to the project that owns
+ * it, with no second pass over the raw slot list. An ARCHIVED goal is idle by
+ * construction, so it never contributes.
+ * ------------------------------------------------------------------------- */
+
+/** Why a session is in the inbox. `approval` is the subset of `needs_you`
+ *  waiting on a tool approval; `needs_input` is the rest of `needs_you` (a
+ *  question or a decision the agent is blocked on); `stalled` is an interrupted
+ *  session awaiting a resume. */
+export type InboxKind = 'approval' | 'needs_input' | 'stalled'
+
+/** One row in the Waiting-on-you inbox: a session that needs the person,
+ *  carrying enough to name it, say what it waits for, and open it. */
+export interface InboxItem {
+  /** The owning session's slot key — `openChat({ slotKey })` opens it. */
+  slotKey: string
+  /** The project (folder) the session belongs to. */
+  projectId: string
+  projectName: string
+  /** The session/goal title; the inbox names the session itself. */
+  sessionTitle: string
+  /** Which status put it here, for the badge and the "waiting for" line. */
+  kind: InboxKind
+  /** The session's last activity, so the inbox sorts newest-first and shows a
+   *  relative time. Empty when unknown — never guessed. */
+  updated: string
+  /** The last message, as a one-line hint of what it is waiting on. */
+  lastMessage: string
+}
+
+/** The inbox rank: a pending approval is the most acute (a tool is blocked
+ *  waiting on a yes/no), then other needs-you input, then a stalled session a
+ *  resume would move. Higher sorts first. */
+const INBOX_RANK: Record<InboxKind, number> = { approval: 3, needs_input: 2, stalled: 1 }
+
+/** Classify a slot already known to need the person into an inbox kind. Returns
+ *  null for a slot that needs no one (working/idle); the caller only passes
+ *  needs_you/stalled slots, but this stays total so a caller change can't
+ *  silently admit a working session. A pending approval wins over needs_input
+ *  when both are set — the approval is the blocking ask. */
+function inboxKind(s: Slot): InboxKind | null {
+  if (s.pending_approval) return 'approval'
+  if (s.needs_input) return 'needs_input'
+  if (s.interrupted) return 'stalled'
+  return null
+}
+
+/**
+ * Every session that needs the person, across all projects, most-acute and
+ * newest first. Walks each project's live goals (lead + sub-team leads +
+ * workers), keeps only the `needs_you` and `stalled` members, and attributes
+ * each to its project. De-duplicated by slot key (a session appears in exactly
+ * one goal, but a defensive guard keeps a corrupt double-listing from showing
+ * twice). Sorted by kind (approval › needs_input › stalled), then most recent.
+ */
+export function buildInbox(projects: FolderProject[]): InboxItem[] {
+  const items: InboxItem[] = []
+  const seen = new Set<string>()
+  const consider = (m: Member, projectId: string, projectName: string) => {
+    if (m.status !== 'needs_you' && m.status !== 'stalled') return
+    const kind = inboxKind(m.slot)
+    if (!kind) return
+    const key = m.slot.key
+    if (!key || seen.has(key)) return
+    seen.add(key)
+    items.push({
+      slotKey: key,
+      projectId,
+      projectName,
+      sessionTitle: m.slot.title || '',
+      kind,
+      updated: updatedAt(m.slot),
+      lastMessage: m.slot.last_message || '',
+    })
+  }
+  for (const p of projects) {
+    for (const goal of p.goals) {
+      if (goal.archived) continue // idle by construction — needs no one
+      consider(goal.lead, p.folder.id, p.folder.name)
+      for (const sub of goal.subTeams) {
+        consider(sub.lead, p.folder.id, p.folder.name)
+        for (const w of sub.workers) consider(w, p.folder.id, p.folder.name)
+      }
+      for (const w of goal.workers) consider(w, p.folder.id, p.folder.name)
+    }
+  }
+  return items.sort(
+    (a, b) => INBOX_RANK[b.kind] - INBOX_RANK[a.kind] || b.updated.localeCompare(a.updated),
+  )
+}

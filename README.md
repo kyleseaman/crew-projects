@@ -89,6 +89,29 @@ folder id to scope to, so a project with no folder shows a **Files unavailable**
 note while its pull requests (which come from the sessions themselves) still
 show. A host listing error degrades the same way.
 
+## Waiting on you
+
+At the **top of the page**, above the project list, a **Waiting-on-you inbox**
+rolls up — across **every** project — the sessions that need the person. It is
+the cross-project roll-up of the `slotStatus` the model already derives: every
+`needs_you` session (pending approval or awaiting input) and every `stalled`
+one (interrupted), with a pending approval surfaced explicitly as its own kind
+(`buildInbox`). `working` and `idle` sessions never enter it, and an archived
+goal is idle by construction so it never contributes. The roll-up walks the
+projects already built, so a session appears exactly once, attributed to the
+project that owns it; the filter box never hides it (it rolls up all projects,
+not the filtered list).
+
+Each row names the project, the session, and **what it is waiting for**
+(approval › input › a resume — the sort order, most acute first, then newest),
+shows a one-line hint from the last message, and **opens that session on click**
+(`openChat({ slotKey })`). A pending approval and a needs-input both use the warm
+`--warn` token; a stalled session uses `--danger`.
+
+When nothing is waiting, the inbox shows a **calm empty state** — a single quiet
+line (`Nothing is waiting on you.`), not an error — and stays compact: it takes
+only the height it needs, so an empty inbox does not push the project list down.
+
 ## Build and install
 
 ```bash
@@ -126,7 +149,11 @@ npm run screenshot   # build the harness and write PNGs to ../screenshots/
   rollup, and a **Library** (artifacts tagged per folder so the stub mimics the
   host's `chat_folder` scope, output files including a saved doc that must be
   hidden and a foreign doc that must be filtered out, and the project's deduped
-  PRs).
+  PRs). For the **Waiting-on-you inbox**, the fixtures carry a pending approval
+  (parsers), a needs-input question and a stalled session (braking) so the
+  populated inbox spans two projects and all three kinds; `slotsNoWaitingFixture`
+  (the same slots with every waiting flag cleared) backs the `?empty=1` mode for
+  the empty-state capture.
 - `vite.dev.config.ts` serves `index.html` → `src/dev/harness.tsx` and aliases
   the two SDK specifiers to the stubs. It writes its build to `dist-dev/`.
 - `scripts/screenshot.mjs` builds the harness, serves it with Vite preview, and
@@ -136,7 +163,11 @@ npm run screenshot   # build the harness and write PNGs to ../screenshots/
   Current captures: `projects-overview`, `projects-overview-narrow`,
   `project-goals` (a project's live + archived goals, each with its rollup),
   `project-single-repo`, `project-set-directory`, `project-library` (a
-  project's artifacts, output files and de-duplicated PRs), `new-project-dialog`.
+  project's artifacts, output files and de-duplicated PRs), `new-project-dialog`,
+  `waiting-on-you` (the populated inbox — an approval, a needs-input and a
+  stalled session across two projects), and `waiting-on-you-empty` (the calm
+  empty state, served by the harness's `?empty=1` mode). A view entry may carry
+  a `query` (e.g. `?empty=1`) appended to the harness URL before the capture.
 
 The harness is dev-only. `npm run build` uses `vite.config.ts` (library mode,
 entry `src/App.tsx`) and never imports anything under `src/dev/`, so the shipped

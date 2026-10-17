@@ -3,6 +3,32 @@
  *  external bundle cannot rely on arbitrary utilities existing. */
 export const css = `
 .tp-root{flex:1;min-height:0;display:flex;flex-direction:column;padding:0 24px 24px;color:var(--text)}
+
+/* Waiting-on-you inbox — a compact, pinned roll-up at the top of the page. It
+   never flexes: it takes only the height it needs so an empty inbox does not
+   push the project list down. */
+.tp-inbox{flex:none;margin-bottom:16px}
+.tp-inbox-head{display:flex;align-items:center;gap:8px;color:var(--warn);margin-bottom:8px}
+.tp-inbox-title{margin:0;font-size:13px;font-weight:600;color:var(--text-strong,var(--text))}
+.tp-inbox-head .tp-muted{margin-left:auto}
+.tp-inbox-list{display:flex;flex-direction:column;gap:6px}
+.tp-inbox-row{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--card);cursor:pointer;border-left:3px solid var(--border)}
+.tp-inbox-row:hover{background:var(--bg-hover)}
+.tp-inbox-row:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.tp-inbox-approval,.tp-inbox-needs_input{border-left-color:var(--warn)}
+.tp-inbox-stalled{border-left-color:var(--danger)}
+.tp-inbox-ico{flex:none;margin-top:1px}
+.tp-inbox-approval .tp-inbox-ico,.tp-inbox-needs_input .tp-inbox-ico{color:var(--warn)}
+.tp-inbox-stalled .tp-inbox-ico{color:var(--danger)}
+.tp-inbox-main{min-width:0;flex:1;display:flex;flex-direction:column;gap:2px}
+.tp-inbox-session{flex:1;min-width:0;font-size:13px;font-weight:600;color:var(--text-strong,var(--text));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tp-inbox-msg{font-style:italic}
+/* The calm empty state: a single quiet row, not an error, that holds no more
+   vertical space than one populated row would. */
+.tp-inbox-empty{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-elevated,var(--card))}
+.tp-inbox-empty-ico{flex:none;color:var(--ok)}
+.tp-inbox-empty-body{min-width:0;display:flex;flex-direction:column;gap:1px}
+.tp-inbox-empty-title{font-size:13px;color:var(--text-strong,var(--text))}
 .tp-split{flex:1;min-height:0;display:grid;grid-template-columns:minmax(240px,320px) 1fr;gap:16px}
 @media (max-width:760px){.tp-split{grid-template-columns:1fr}}
 .tp-list{min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:4px;padding-right:4px}

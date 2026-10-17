@@ -12,6 +12,7 @@
 import { useEffect } from 'react'
 import {
   slotsFixture,
+  slotsNoWaitingFixture,
   autonudgeFixture,
   foldersFixture,
   sessionsPageFixture,
@@ -20,6 +21,13 @@ import {
   type Folder,
 } from './fixtures'
 import type { Slot } from '../model'
+
+/** Harness-only flag: `?empty=1` serves the no-waiting slot list so the inbox's
+ *  calm empty state can be screenshotted. Never a real API concern. */
+function inboxEmptyMode(): boolean {
+  if (typeof window === 'undefined') return false
+  return new URLSearchParams(window.location.search).get('empty') === '1'
+}
 
 export interface AppApi {
   raw(path: string, init?: RequestInit): Promise<Response>
@@ -53,7 +61,7 @@ function queryParam(path: string, key: string): string {
 function resolve<T>(path: string): T {
   switch (route(path)) {
     case '/api/chat/slots':
-      return slotsFixture as unknown as T
+      return (inboxEmptyMode() ? slotsNoWaitingFixture : slotsFixture) as unknown as T
     case '/api/autonudge':
       return autonudgeFixture as unknown as T
     case '/api/chat/folders':
