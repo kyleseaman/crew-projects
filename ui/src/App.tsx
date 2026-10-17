@@ -399,7 +399,7 @@ function SubscriptionRow({ sub, onOpen }: { sub: Subscription; onOpen: (key: str
     sub.kind === 'monitor' ? t.subMonitorMeta(sub.detail, sub.progress) : t.subSlackMeta(sub.detail)
   return (
     <Clickable
-      className="tp-sub-row"
+      className="tp-subs-row"
       onClick={() => onOpen(sub.slotKey)}
       aria-label={t.subscriptionOpen(sub.sessionTitle || t.untitled)}
     >
