@@ -1,11 +1,15 @@
 {
   "name": "team-projects",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "displayName": "Projects",
-  "description": "Every kirocrew-team-lead session as a project, with its sub-leads, workers, loop progress and PRs grouped under it.",
+  "description": "Projects as folders: repositories, default agent and instructions, every team-lead goal with its team, a Library, subscriptions, and what is waiting on you.",
   "author": "kyle",
   "iconPath": "assets/icon.png",
-  "tags": ["agents", "orchestration", "visualization"],
+  "tags": [
+    "agents",
+    "orchestration",
+    "visualization"
+  ],
   "ui": {
     "entry": "dist/index.mjs",
     "pages": [
@@ -17,7 +21,15 @@
     ]
   },
   "permissions": {
-    "api": ["/api/chat/slots", "/api/chat/folders", "/api/autonudge", "/api/sessions", "/api/artifacts"],
-    "events": ["slots"]
+    "api": [
+      "/api/chat/slots",
+      "/api/chat/folders",
+      "/api/autonudge",
+      "/api/sessions",
+      "/api/artifacts"
+    ],
+    "events": [
+      "slots"
+    ]
   }
 }
