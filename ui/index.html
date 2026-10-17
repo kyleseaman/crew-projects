@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>team-projects dev harness</title>
+  </head>
+  <body>
+    <!--
+      Dev-only harness host page. Served by `npm run dev` (vite.dev.config.ts).
+      It is NOT part of the production bundle: `npm run build` uses the library
+      config in vite.config.ts whose entry is src/App.tsx, so this file and
+      everything under src/dev/ never reach dist/index.mjs.
+    -->
+    <div id="root"></div>
+    <script type="module" src="/src/dev/harness.tsx"></script>
+  </body>
+</html>
