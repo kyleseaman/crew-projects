@@ -81,9 +81,15 @@ a.tp-chip:hover{border-color:var(--border-strong,var(--border));color:var(--text
 .tp-setdir-body{min-width:0}
 .tp-setdir-title{display:block;font-size:13px;color:var(--text-strong,var(--text))}
 
-.tp-teams{display:flex;flex-direction:column;gap:14px;padding:14px 16px}
+.tp-teams{display:flex;flex-direction:column;gap:18px;padding:14px 16px}
+.tp-goals-section{display:flex;flex-direction:column;gap:10px}
+.tp-section-head{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600}
 .tp-team{border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.tp-team-archived{opacity:.72;border-style:dashed}
+.tp-team-archived .tp-lead{border-bottom:none}
 .tp-h3{margin:0;font-size:14px;font-weight:600;color:var(--text-strong,var(--card-fg,var(--text)))}
+.tp-h3-archived{font-weight:500;color:var(--muted-strong,var(--muted))}
+.tp-nogoals{display:flex;flex-direction:column;align-items:flex-start;gap:10px}
 
 /* New-project dialog */
 .tp-overlay{position:fixed;inset:0;background:color-mix(in srgb, #000 55%, transparent);display:flex;align-items:center;justify-content:center;padding:24px;z-index:50}

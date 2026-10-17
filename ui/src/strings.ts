@@ -21,6 +21,20 @@ export const t = {
   agents: (n: number) => (n === 1 ? '1 agent' : `${n} agents`),
   active: (n: number) => `${n} active`,
   noAgents: 'No agents yet. The lead has not dispatched anyone.',
+
+  // --- Goals per project (Step 3) ------------------------------------------
+  newGoal: 'New goal',
+  openGoal: 'Open goal',
+  liveGoals: 'Goals',
+  archivedGoals: 'Archived goals',
+  archivedGoal: 'Archived',
+  noGoals: 'No goals yet. Start one to give the team-lead something to run.',
+  /** The project-list subtitle count: how many goals are live out of the total
+   *  (live + archived). */
+  goalsCount: (live: number, total: number) =>
+    total === live
+      ? (total === 1 ? '1 goal' : `${total} goals`)
+      : `${live} of ${total} goals live`,
   emptyTitle: 'No projects yet',
   emptyBody: 'A project starts when you open a chat with the kirocrew-team-lead agent and give it a goal.',
   noMatch: 'No projects match this filter.',

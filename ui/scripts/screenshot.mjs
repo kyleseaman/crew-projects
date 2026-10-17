@@ -29,7 +29,16 @@ const VIEWS = [
   // which spans multiple repos and shows read-only instructions.
   { name: 'projects-overview', width: 1280, height: 900 },
   { name: 'projects-overview-narrow', width: 760, height: 900 },
-  // A single-repo project (the extra_repos degrade path), selected by name.
+  // The per-project GOALS view: a project with multiple LIVE goals (each with
+  // its sub-team/worker rollup) and ARCHIVED goals below them.
+  {
+    name: 'project-goals',
+    width: 1280,
+    height: 1200,
+    prepare: async page => clickProjectByName(page, 'Verify telemetry parsers'),
+  },
+  // A single-repo project (the extra_repos degrade path) that also shows one
+  // live and one archived goal, selected by name.
   {
     name: 'project-single-repo',
     width: 1280,

@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  archivedGoalsIn,
   buildFolderProjects,
   buildProjects,
   folderRepos,
   loopText,
   repoName,
+  type ArchivedSession,
   type Folder,
   type Slot,
 } from './model'
@@ -117,19 +119,39 @@ describe('buildFolderProjects', () => {
     expect(projects[0].status).toBe('needs_you')
   })
 
-  it('attaches a team filed in a nested sub-folder to its top-level project', () => {
+  it('attaches a goal filed in a nested sub-folder to its top-level project', () => {
     const folders = [folder('f', { project_dir: '/p' }), folder('f-sub', { parent_id: 'f' })]
     const slots = [lead('L', { folder_id: 'f-sub' }), kid('W', 'L')]
     const [p] = buildFolderProjects(folders, slots, [])
-    expect(p.teams).toHaveLength(1)
-    expect(p.teams[0].lead.slot.key).toBe('L')
+    expect(p.goals).toHaveLength(1)
+    expect(p.goals[0].lead.slot.key).toBe('L')
+    expect(p.goals[0].archived).toBe(false)
   })
 
-  it('attaches a team by matching project path when it has no folder_id', () => {
+  it('attaches a goal by matching project path when it has no folder_id', () => {
     const folders = [folder('f', { project_dir: '/p/repo' })]
     const slots = [lead('L', { project: '/p/repo' })]
     const [p] = buildFolderProjects(folders, slots, [])
-    expect(p.teams.map(t => t.lead.slot.key)).toEqual(['L'])
+    expect(p.goals.map(g => g.lead.slot.key)).toEqual(['L'])
+  })
+
+  it('keeps each goal\'s sub-team/worker grouping scoped to that goal', () => {
+    // Two live team-lead goals in one folder, each with its own worker. The
+    // grouping must stay per-goal: a goal must not pull in another goal's agents.
+    const folders = [folder('f', { project_dir: '/p' })]
+    const slots = [
+      lead('L1', { folder_id: 'f' }),
+      kid('W1', 'L1'),
+      lead('L2', { folder_id: 'f' }),
+      kid('W2', 'L2'),
+    ]
+    const [p] = buildFolderProjects(folders, slots, [])
+    const g1 = p.goals.find(g => g.lead.slot.key === 'L1')!
+    const g2 = p.goals.find(g => g.lead.slot.key === 'L2')!
+    expect(g1.workers.map(w => w.slot.key)).toEqual(['W1'])
+    expect(g2.workers.map(w => w.slot.key)).toEqual(['W2'])
+    expect(g1.memberCount).toBe(1)
+    expect(g2.memberCount).toBe(1)
   })
 
   it('flags a folder with no directory and sets no repos — never a guess', () => {
@@ -148,5 +170,80 @@ describe('buildFolderProjects', () => {
   it('carries read-only instruction dirs through without the app writing them', () => {
     const [p] = buildFolderProjects([folder('f', { project_dir: '/p', steering_dirs: ['/std', '/org'] })], [], [])
     expect(p.instructions).toEqual(['/std', '/org'])
+  })
+
+  it('lists archived team-lead goals after the live ones, newest first', () => {
+    const folders = [folder('f', { project_dir: '/p' })]
+    const slots = [lead('L-live', { folder_id: 'f' })]
+    const sessions: ArchivedSession[] = [
+      { key: 'h-old', title: 'Old goal', agent: 'kirocrew-team-lead', folder_id: 'f', modified: 1000 },
+      { key: 'h-new', title: 'New goal', agent: 'kirocrew-team-lead', folder_id: 'f', modified: 2000 },
+    ]
+    const [p] = buildFolderProjects(folders, slots, [], sessions)
+    expect(p.goals.map(g => g.lead.slot.key)).toEqual(['L-live', 'h-new', 'h-old'])
+    expect(p.goals.map(g => g.archived)).toEqual([false, true, true])
+  })
+
+  it('never lets an archived goal raise the project status or updated sort key', () => {
+    // A live idle goal and an archived goal: the archived one is idle by
+    // construction, so the project stays idle and its updated reflects the live
+    // goal, not the (possibly newer) archived row.
+    const folders = [folder('f', { project_dir: '/p' })]
+    const slots = [lead('L', { folder_id: 'f', last_activity_ts: '2020-01-01T00:00:00Z' })]
+    const sessions: ArchivedSession[] = [
+      { key: 'h', agent: 'kirocrew-team-lead', folder_id: 'f', modified: Date.now() / 1000 },
+    ]
+    const [p] = buildFolderProjects(folders, slots, [], sessions)
+    expect(p.status).toBe('idle')
+    expect(p.updated).toBe('2020-01-01T00:00:00Z')
+  })
+
+  it('does not duplicate a goal that is both live and in the history list', () => {
+    const folders = [folder('f', { project_dir: '/p' })]
+    const slots = [lead('L', { folder_id: 'f' })]
+    const sessions: ArchivedSession[] = [
+      { key: 'L', title: 'same session', agent: 'kirocrew-team-lead', folder_id: 'f', modified: 1000 },
+    ]
+    const [p] = buildFolderProjects(folders, slots, [], sessions)
+    expect(p.goals).toHaveLength(1)
+    expect(p.goals[0].archived).toBe(false)
+  })
+})
+
+describe('archivedGoalsIn', () => {
+  const subtree = new Set(['f', 'f-sub'])
+  const live = new Set(['L-open'])
+
+  it('keeps only team-lead sessions filed in the subtree with no live slot', () => {
+    const sessions: ArchivedSession[] = [
+      { key: 'g1', agent: 'kirocrew-team-lead', folder_id: 'f', modified: 2 },
+      { key: 'g2', agent: 'kirocrew-team-lead', folder_id: 'f-sub', modified: 3 }, // nested
+      { key: 'not-lead', agent: 'kirocrew-worker', folder_id: 'f', modified: 9 }, // wrong agent
+      { key: 'elsewhere', agent: 'kirocrew-team-lead', folder_id: 'other', modified: 9 }, // other folder
+      { key: 'homeless', agent: 'kirocrew-team-lead', modified: 9 }, // no folder
+      { key: 'L-open', agent: 'kirocrew-team-lead', folder_id: 'f', modified: 9 }, // already live
+    ]
+    const goals = archivedGoalsIn(sessions, subtree, live)
+    expect(goals.map(g => g.lead.slot.key)).toEqual(['g2', 'g1']) // newest first
+    expect(goals.every(g => g.archived && g.memberCount === 0 && g.loop === null && g.status === 'idle')).toBe(true)
+  })
+
+  it('converts the modified epoch-seconds into an ISO updated timestamp', () => {
+    const [g] = archivedGoalsIn(
+      [{ key: 'g', agent: 'kirocrew-team-lead', folder_id: 'f', modified: 1_700_000_000 }],
+      subtree,
+      new Set(),
+    )
+    expect(g.updated).toBe(new Date(1_700_000_000 * 1000).toISOString())
+    expect(g.lead.slot.last_activity_ts).toBe(g.updated)
+  })
+
+  it('leaves the updated time empty rather than guess when modified is absent', () => {
+    const [g] = archivedGoalsIn(
+      [{ key: 'g', agent: 'kirocrew-team-lead', folder_id: 'f' }],
+      subtree,
+      new Set(),
+    )
+    expect(g.updated).toBe('')
   })
 })

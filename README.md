@@ -8,7 +8,9 @@ folders appear as projects as-is.
 ## Project list and page
 
 - **List** — one row per top-level folder, sorted worst-status first then most
-  recently active. A folder with no `project_dir` shows `No directory set`.
+  recently active, showing its repositories and a goal count (`N of M goals
+  live` when some are archived). A folder with no `project_dir` shows `No
+  directory set`.
 - **New project** — a dialog takes a name, **one or more directories**, and the
   fixed default agent `kirocrew-team-lead`. It `POST`s to `/api/chat/folders`
   with `project_dir` (the first directory) and, when more are given, an optional
@@ -24,20 +26,40 @@ API. It never writes `steering_dirs` — core refuses an app principal there by
 design (`_refuse_principal_steering_dirs`) — and never reorganises, moves or
 re-files existing sessions or folders.
 
-## Agent activity within a project
+## Goals within a project
 
-Under the header, each project shows the team rollups whose sessions are filed
-in the folder (by `folder_id`, or by a matching working directory when a session
-has no folder). Each rollup groups everything a `kirocrew-team-lead` dispatched,
-at most two levels deep:
+Under the header, a project lists its **goals** — the root `kirocrew-team-lead`
+sessions filed in its folder. Each goal carries its own sub-team/worker rollup,
+grouped at most two levels deep **under that goal**:
+
+- **Live goals** (`GET /api/chat/slots`): a running team-lead, with its
+  dispatched agents, loop and status. A live goal is attached to a project by
+  `folder_id` (its folder subtree), or by a matching working directory when the
+  session has no folder.
+- **Archived goals** (`GET /api/sessions`): a team-lead **history** session with
+  no live slot — a finished or set-aside goal. It shows dimmed and openable,
+  with no live rollup. Attached by `folder_id` only; a goal currently open in a
+  slot is never also listed as archived.
+
+Within a live goal, grouping follows each session's `created_by`:
 
 - **Sub-team**: a session the lead created that created sessions of its own
   (a conductor, or a nested team lead). All its descendants are its workers.
 - **Workers**: sessions the lead created directly that have no children.
 
-Grouping follows each session's `created_by`. Status rolls up worst-first
-(needs you › stalled › working › idle), the lead's loop comes from
-`/api/autonudge`, and PR chips are de-duplicated across the team.
+Each goal's grouping is scoped to that goal, so two goals in the same project
+never pull in each other's agents. Status rolls up worst-first across a goal's
+members (needs you › stalled › working › idle), the lead's loop comes from
+`/api/autonudge`, and PR chips are de-duplicated. The project-list dot and sort
+key read **live** goals only — an archived goal is idle by construction and
+never raises the dot or sinks an active project down the list.
+
+**New goal** creates an unsent draft team-lead session in the project's folder.
+`openChat` alone cannot do this (its launch options carry no folder), so the app
+`POST`s to `/api/chat/slots` with `{ agent: kirocrew-team-lead, folder_id }` —
+core files the slot into the folder at birth without sending anything — then
+navigates into that empty session. The person types and sends the first turn.
+This is the app creating a brand-new slot; it never re-files an existing one.
 
 ## Build and install
 
@@ -63,13 +85,16 @@ npm run screenshot   # build the harness and write PNGs to ../screenshots/
   `@kirocrew/app-sdk` and `@kirocrew/app-sdk/ui`. `useAppApi().get` resolves
   fixtures by path; the UI components mirror the host design system on the same
   theme tokens.
-- `src/dev/fixtures.ts` mirrors the real `/api/chat/slots`, `/api/autonudge`
-  and `/api/chat/folders` payload shapes: multiple project folders (one
-  multi-repo with `extra_repos` and read-only `steering_dirs`, one single-repo,
-  one with no `project_dir` for the Set-directory prompt, plus a nested
-  sub-folder), a sub-team, direct workers, active and stopped loops,
-  de-duplicated PRs across every CI state, and each `needs_you` / `stalled` /
-  `working` / `idle` rollup.
+- `src/dev/fixtures.ts` mirrors the real `/api/chat/slots`, `/api/autonudge`,
+  `/api/chat/folders` and `/api/sessions` payload shapes: multiple project
+  folders (one multi-repo with `extra_repos` and read-only `steering_dirs`, one
+  single-repo, one with no `project_dir` for the Set-directory prompt, plus a
+  nested sub-folder), **two live goals in one project** (each with its own
+  sub-team/worker rollup), **archived goals** (team-lead history sessions,
+  including rows that must be ignored: a non-lead chat, an already-live goal,
+  and an unfiled lead), direct workers, active and stopped loops, de-duplicated
+  PRs across every CI state, and each `needs_you` / `stalled` / `working` /
+  `idle` rollup.
 - `vite.dev.config.ts` serves `index.html` → `src/dev/harness.tsx` and aliases
   the two SDK specifiers to the stubs. It writes its build to `dist-dev/`.
 - `scripts/screenshot.mjs` builds the harness, serves it with Vite preview, and
@@ -77,6 +102,7 @@ npm run screenshot   # build the harness and write PNGs to ../screenshots/
   a `prepare` step that drives the UI into a state (selecting a project, opening
   the New-project dialog) before the capture. Add views as later steps land.
   Current captures: `projects-overview`, `projects-overview-narrow`,
+  `project-goals` (a project's live + archived goals, each with its rollup),
   `project-single-repo`, `project-set-directory`, `new-project-dialog`.
 
 The harness is dev-only. `npm run build` uses `vite.config.ts` (library mode,

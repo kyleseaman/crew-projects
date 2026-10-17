@@ -69,6 +69,11 @@ export interface Project {
   prs: SourceLink[]
   repo: string
   updated: string
+  /** True when this goal is an ARCHIVED (history) team-lead session with no
+   *  live slot — it has no agents, loop or live status; the UI shows it as a
+   *  dimmed, openable goal rather than a running team. A live goal built from
+   *  the slot list is false. */
+  archived: boolean
 }
 
 export function slotStatus(s: Slot): Status {
@@ -166,6 +171,7 @@ export function buildProjects(slots: Slot[], loops: Loop[]): Project[] {
       prs: [...prs.values()],
       repo: basename(lead.project),
       updated: all.map(m => updatedAt(m.slot)).sort().pop() ?? '',
+      archived: false,
     })
   }
 
@@ -179,6 +185,99 @@ export function loopText(loop: Loop | null): string {
   if (!loop) return ''
   const n = loop.cycle_count ?? 0
   return loop.max_cycles ? `${n}/${loop.max_cycles}` : String(n)
+}
+
+/* ---------------------------------------------------------------------------
+ * Archived goals.
+ *
+ * A project's goals are its root `kirocrew-team-lead` sessions. The LIVE ones
+ * come from `/api/chat/slots` (above). The ARCHIVED ones are history sessions
+ * with no open slot: `GET /api/sessions` lists every session file, each row
+ * carrying `key`, `title`, `agent`, `folder_id` and `modified` (see core
+ * `history_search.list_sessions`). An archived goal is a history row whose
+ * agent is the team lead, filed in the project's folder, that no live slot
+ * already holds open. It has no live sub-team/worker rollup (its dispatched
+ * sessions, if any, are themselves archived rows the project does not expand),
+ * so it renders as a dimmed, openable goal.
+ * ------------------------------------------------------------------------- */
+
+/** One row from `GET /api/sessions` (`{ sessions, total, has_more }`). Only the
+ *  fields this app reads are typed; a row carries more (messages, created,
+ *  memory_mode, preview) the app ignores. */
+export interface ArchivedSession {
+  key: string
+  title?: string
+  agent?: string
+  folder_id?: string
+  /** Epoch seconds (float) from the file mtime, per core `list_sessions`. */
+  modified?: number
+}
+
+/** The `GET /api/sessions` envelope. */
+export interface SessionsPage {
+  sessions: ArchivedSession[]
+  total?: number
+  has_more?: boolean
+}
+
+/** An archived session's `modified` (epoch seconds) as an ISO string, so the
+ *  UI formats it with the same relative-time helper as a live slot's
+ *  timestamp. Empty when absent or unparseable — never a guessed time. */
+function archivedUpdatedAt(s: ArchivedSession): string {
+  const secs = typeof s.modified === 'number' ? s.modified : NaN
+  if (!Number.isFinite(secs)) return ''
+  return new Date(secs * 1000).toISOString()
+}
+
+/** Build an archived goal (a `Project` with no live rollup) from a history row.
+ *  It carries only the lead; status is always idle and there is no loop. */
+function archivedGoal(s: ArchivedSession): Project {
+  const slot: Slot = {
+    key: s.key,
+    title: s.title,
+    agent: s.agent,
+    folder_id: s.folder_id,
+    last_activity_ts: archivedUpdatedAt(s),
+  }
+  return {
+    lead: { slot, status: 'idle' },
+    loop: null,
+    subTeams: [],
+    workers: [],
+    memberCount: 0,
+    activeCount: 0,
+    status: 'idle',
+    prs: [],
+    repo: '',
+    updated: archivedUpdatedAt(s),
+    archived: true,
+  }
+}
+
+/**
+ * The archived team-lead goals of a project, newest first. An archived goal is
+ * a history row that:
+ *   - is a `kirocrew-team-lead` session,
+ *   - is filed in the project's folder subtree (`folder_id`),
+ *   - and has NO live slot (`liveKeys`) — a goal open in a slot is live, and
+ *     showing it twice would double-count it.
+ * `liveKeys` is every live slot key, so a live goal is never duplicated as an
+ * archived one.
+ */
+export function archivedGoalsIn(
+  sessions: ArchivedSession[],
+  subtree: Set<string>,
+  liveKeys: Set<string>,
+): Project[] {
+  const goals: Project[] = []
+  for (const s of sessions) {
+    if (s.agent !== TEAM_LEAD_AGENT) continue
+    const folderId = (s.folder_id || '').trim()
+    if (!folderId || !subtree.has(folderId)) continue
+    if (liveKeys.has(s.key)) continue
+    goals.push(archivedGoal(s))
+  }
+  return goals.sort((a, b) => b.updated.localeCompare(a.updated))
 }
 
 /* ---------------------------------------------------------------------------
@@ -232,13 +331,19 @@ export interface FolderProject {
   /** True when no working directory is set — the header shows a Set-directory
    *  prompt and NEVER guesses a path. */
   needsDir: boolean
-  /** The team rollups (lead + its agents) whose sessions are filed in this
-   *  folder, or whose working directory matches one of the project's repos.
-   *  The project page renders these under the header. */
-  teams: Project[]
-  /** Worst-first status across the project's teams, for the list dot. */
+  /** The project's GOALS: each is a root `kirocrew-team-lead` session, with its
+   *  sub-team/worker rollup grouped UNDER it. Live goals (`archived: false`)
+   *  come from the slot list and carry their agents, loop and status; archived
+   *  goals (`archived: true`) are history team-lead sessions with no live slot,
+   *  shown dimmed and openable. A live goal is attached by `folder_id` (or a
+   *  matching working directory when the goal has no folder); an archived goal
+   *  is attached by `folder_id` only. Live goals first (worst status first),
+   *  then archived goals newest first. */
+  goals: Project[]
+  /** Worst-first status across the project's LIVE goals, for the list dot.
+   *  Archived goals are idle by construction and never raise it. */
   status: Status
-  /** Most recent activity across the project's teams. */
+  /** Most recent activity across all the project's goals. */
   updated: string
 }
 
@@ -302,9 +407,17 @@ function folderSubtreeIds(folders: Folder[], rootId: string): Set<string> {
  * needs-you first, then by most recent activity, then name — the folder's own
  * `order` governs the sidebar, not this app page.
  */
-export function buildFolderProjects(folders: Folder[], slots: Slot[] = [], loops: Loop[] = []): FolderProject[] {
+export function buildFolderProjects(
+  folders: Folder[],
+  slots: Slot[] = [],
+  loops: Loop[] = [],
+  sessions: ArchivedSession[] = [],
+): FolderProject[] {
   const tops = folders.filter(f => !(f.parent_id && f.parent_id !== f.id))
   const allTeams = buildProjects(slots, loops)
+  // Every live session key, so an archived goal that is actually open in a slot
+  // is not listed a second time as history.
+  const liveKeys = new Set(slots.map(s => s.key))
 
   const result = tops.map<FolderProject>(folder => {
     const repos = folderRepos(folder)
@@ -313,7 +426,7 @@ export function buildFolderProjects(folders: Folder[], slots: Slot[] = [], loops
       ? folder.steering_dirs.filter(s => typeof s === 'string' && s.trim() !== '')
       : []
     const subtree = folderSubtreeIds(folders, folder.id)
-    const teams = allTeams.filter(team => {
+    const liveGoals = allTeams.filter(team => {
       const lead = team.lead.slot
       // A session filed into a folder belongs to THAT folder's project. The
       // working-directory match is only a fallback for a session with no
@@ -323,15 +436,22 @@ export function buildFolderProjects(folders: Folder[], slots: Slot[] = [], loops
       const leadProject = (lead.project || '').trim()
       return leadProject !== '' && repoSet.has(leadProject)
     })
-    const status = teams.reduce<Status>((acc, t) => worst(acc, t.status), 'idle')
-    const updated = teams.map(t => t.updated).sort().pop() ?? ''
+    const archivedGoals = archivedGoalsIn(sessions, subtree, liveKeys)
+    // Live goals first (worst status first, then most recent), then archived
+    // goals newest first — a running goal is what the person acts on.
+    const goals = [...liveGoals, ...archivedGoals]
+    // The list dot and sort key read LIVE goals only: an archived goal is idle
+    // by construction, so it would never raise the dot, and letting a long-dead
+    // history row set `updated` would sink an active project down the list.
+    const status = liveGoals.reduce<Status>((acc, t) => worst(acc, t.status), 'idle')
+    const updated = liveGoals.map(t => t.updated).sort().pop() ?? ''
     return {
       folder,
       repos,
       defaultAgent: (folder.default_agent || '').trim() || DEFAULT_PROJECT_AGENT,
       instructions,
       needsDir: repos.length === 0,
-      teams,
+      goals,
       status,
       updated,
     }

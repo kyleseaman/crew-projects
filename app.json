@@ -17,7 +17,7 @@
     ]
   },
   "permissions": {
-    "api": ["/api/chat/slots", "/api/chat/folders", "/api/autonudge"],
+    "api": ["/api/chat/slots", "/api/chat/folders", "/api/autonudge", "/api/sessions"],
     "events": ["slots"]
   }
 }

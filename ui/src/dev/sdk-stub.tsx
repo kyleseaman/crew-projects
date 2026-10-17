@@ -10,7 +10,7 @@
  * a no-op that logs intent so a reviewer can see what the app asked for.
  */
 import { useEffect } from 'react'
-import { slotsFixture, autonudgeFixture, foldersFixture, type Folder } from './fixtures'
+import { slotsFixture, autonudgeFixture, foldersFixture, sessionsPageFixture, type Folder } from './fixtures'
 import type { Slot } from '../model'
 
 export interface AppApi {
@@ -43,6 +43,8 @@ function resolve<T>(path: string): T {
       return autonudgeFixture as unknown as T
     case '/api/chat/folders':
       return foldersFixture as unknown as T
+    case '/api/sessions':
+      return sessionsPageFixture as unknown as T
     default:
       // eslint-disable-next-line no-console
       console.warn(`[sdk-stub] unmocked GET ${path} -> []`)
@@ -78,6 +80,17 @@ const api: AppApi = {
         history_count: 0,
       }
       return created as unknown as T
+    }
+    if (route(path) === '/api/chat/slots') {
+      // Mirror the create response: core echoes the new slot. The harness never
+      // persists it (fixtures are static); the key just lets openChat navigate.
+      const b = (body as Record<string, unknown>) || {}
+      const slot = {
+        key: `new-goal-${Math.random().toString(36).slice(2, 8)}`,
+        agent: typeof b.agent === 'string' ? b.agent : 'kirocrew-team-lead',
+        folder_id: typeof b.folder_id === 'string' ? b.folder_id : '',
+      }
+      return slot as unknown as T
     }
     return {} as T
   },
@@ -115,7 +128,7 @@ export function useAppInfo(): AppInfo {
   return {
     name: 'team-projects',
     version: '0.1.0',
-    permissions: { api: ['/api/chat/slots', '/api/chat/folders', '/api/autonudge'], events: ['slots'] },
+    permissions: { api: ['/api/chat/slots', '/api/chat/folders', '/api/autonudge', '/api/sessions'], events: ['slots'] },
     active: true,
   }
 }

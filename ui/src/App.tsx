@@ -21,11 +21,13 @@ import {
   repoName,
   DEFAULT_PROJECT_AGENT,
   TEAM_LEAD_AGENT,
+  type ArchivedSession,
   type Folder,
   type FolderProject,
   type Loop,
   type Member,
   type Project,
+  type SessionsPage,
   type Slot,
   type SourceLink,
   type Status,
@@ -80,11 +82,11 @@ function LoopLine({ loop }: { loop: Loop | null }) {
 
 /** One project row in the sidebar list. A project is a folder. */
 function ProjectRow({ p, selected, onSelect }: { p: FolderProject; selected: boolean; onSelect: () => void }) {
-  const teamCount = p.teams.length
+  const liveGoals = p.goals.filter(g => !g.archived)
   const reposLabel = p.needsDir
     ? t.setDirectoryTitle
     : p.repos.map(repoName).join(' · ')
-  const prs = dedupePrs(p.teams)
+  const prs = dedupePrs(p.goals)
   return (
     <Clickable
       className={`tp-prow ${selected ? 'tp-prow-sel' : ''}`}
@@ -97,7 +99,7 @@ function ProjectRow({ p, selected, onSelect }: { p: FolderProject; selected: boo
         {p.updated && <span className="tp-muted tp-nowrap">{when(p.updated)}</span>}
       </div>
       <div className="tp-muted tp-ellipsis tp-indent">
-        {[reposLabel, teamCount ? t.agents(projectAgentCount(p)) : '']
+        {[reposLabel, p.goals.length ? t.goalsCount(liveGoals.length, p.goals.length) : '']
           .filter(Boolean)
           .join(' · ')}
       </div>
@@ -109,11 +111,6 @@ function ProjectRow({ p, selected, onSelect }: { p: FolderProject; selected: boo
       )}
     </Clickable>
   )
-}
-
-/** Count every agent across a project's team rollups (lead + members). */
-function projectAgentCount(p: FolderProject): number {
-  return p.teams.reduce((n, team) => n + 1 + team.memberCount, 0)
 }
 
 /** PRs de-duplicated across every team in a project. */
@@ -145,11 +142,33 @@ function MemberRow({ m, role, indent, onOpen }: { m: Member; role: string; inden
   )
 }
 
-/** One team rollup (a team-lead and everything it dispatched) inside a project. */
-function TeamRollup({ team, loops, onOpen }: { team: Project; loops: Loop[]; onOpen: (key: string) => void }) {
+/** One goal inside a project: a team-lead session and everything it
+ *  dispatched, grouped at most two levels deep. An ARCHIVED goal (a history
+ *  team-lead session with no live slot) renders dimmed, with no rollup — just
+ *  the lead and an Open button. */
+function GoalCard({ goal, loops, onOpen }: { goal: Project; loops: Loop[]; onOpen: (key: string) => void }) {
   const [workersOpen, setWorkersOpen] = useState(true)
-  const s = team.lead.slot
+  const s = goal.lead.slot
   const subLoop = (key: string) => loops.find(l => l.slot_key === key && l.active) ?? null
+
+  if (goal.archived) {
+    return (
+      <div className="tp-team tp-team-archived">
+        <div className="tp-lead">
+          <div className="tp-lead-body">
+            <div className="tp-muted tp-row-top tp-wrap">
+              <Badge variant="muted">{t.archivedGoal}</Badge>
+              <span>{t.lead} · {TEAM_LEAD_AGENT}</span>
+              {s.last_activity_ts && <span>· {when(s.last_activity_ts)}</span>}
+            </div>
+            <h3 className="tp-h3 tp-h3-archived">{s.title || t.untitled}</h3>
+          </div>
+          <Btn onClick={() => onOpen(s.key)}>{t.openGoal}</Btn>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="tp-team">
       <div className="tp-lead">
@@ -157,23 +176,23 @@ function TeamRollup({ team, loops, onOpen }: { team: Project; loops: Loop[]; onO
           <div className="tp-muted">{t.lead} · {TEAM_LEAD_AGENT} · {when(s.last_activity_ts || s.last_ts || '')}</div>
           <h3 className="tp-h3">{s.title || t.untitled}</h3>
           <div className="tp-muted tp-row-top tp-wrap">
-            <Badge variant={STATUS_VARIANT[team.status]}>{t.status[team.status]}</Badge>
-            <LoopLine loop={team.loop} />
-            {team.memberCount > 0 && <span>{t.agents(team.memberCount)} · {t.active(team.activeCount)}</span>}
+            <Badge variant={STATUS_VARIANT[goal.status]}>{t.status[goal.status]}</Badge>
+            <LoopLine loop={goal.loop} />
+            {goal.memberCount > 0 && <span>{t.agents(goal.memberCount)} · {t.active(goal.activeCount)}</span>}
           </div>
           {s.last_message && <p className="tp-last tp-clamp">{s.last_message}</p>}
         </div>
         <Btn primary onClick={() => onOpen(s.key)}>{t.openLead}</Btn>
       </div>
 
-      {team.memberCount === 0 ? (
+      {goal.memberCount === 0 ? (
         <p className="tp-muted tp-pad">{t.noAgents}</p>
       ) : (
         <div className="tp-table" role="list">
           <div className="tp-thead" aria-hidden="true">
             <span>{t.task}</span><span>{t.step}</span><span>{t.prs}</span><span>{t.updated}</span>
           </div>
-          {team.subTeams.map(sub => (
+          {goal.subTeams.map(sub => (
             <div key={sub.lead.slot.key} role="listitem">
               <div className="tp-group">
                 <Users size={12} aria-hidden="true" />
@@ -186,14 +205,14 @@ function TeamRollup({ team, loops, onOpen }: { team: Project; loops: Loop[]; onO
               {sub.workers.map(w => <MemberRow key={w.slot.key} m={w} role={t.worker} indent onOpen={onOpen} />)}
             </div>
           ))}
-          {team.workers.length > 0 && (
+          {goal.workers.length > 0 && (
             <div role="listitem">
               <Clickable className="tp-group tp-group-btn" onClick={() => setWorkersOpen(o => !o)} aria-expanded={workersOpen}>
                 {workersOpen ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}
-                {t.workers} · {team.workers.length}
-                <span className="tp-muted">{t.active(team.workers.filter(w => w.status !== 'idle').length)}</span>
+                {t.workers} · {goal.workers.length}
+                <span className="tp-muted">{t.active(goal.workers.filter(w => w.status !== 'idle').length)}</span>
               </Clickable>
-              {workersOpen && team.workers.map(w => <MemberRow key={w.slot.key} m={w} role={t.worker} onOpen={onOpen} />)}
+              {workersOpen && goal.workers.map(w => <MemberRow key={w.slot.key} m={w} role={t.worker} onOpen={onOpen} />)}
             </div>
           )}
         </div>
@@ -209,15 +228,17 @@ function ProjectPage({
   p,
   loops,
   onOpen,
-  onOpenProject,
+  onNewGoal,
   onSettings,
 }: {
   p: FolderProject
   loops: Loop[]
   onOpen: (key: string) => void
-  onOpenProject: (p: FolderProject) => void
+  onNewGoal: (p: FolderProject) => void
   onSettings: (p: FolderProject) => void
 }) {
+  const liveGoals = p.goals.filter(g => !g.archived)
+  const archivedGoals = p.goals.filter(g => g.archived)
   return (
     <div className="tp-detail">
       <header className="tp-phead">
@@ -230,7 +251,9 @@ function ProjectPage({
             <Btn onClick={() => onSettings(p)}>
               <Settings size={13} className="lucide-inline" aria-hidden="true" /> {t.folderSettings}
             </Btn>
-            <Btn primary onClick={() => onOpenProject(p)}>{t.openProject}</Btn>
+            <Btn primary onClick={() => onNewGoal(p)}>
+              <Plus size={13} className="lucide-inline" aria-hidden="true" /> {t.newGoal}
+            </Btn>
           </div>
         </div>
 
@@ -277,13 +300,31 @@ function ProjectPage({
         )}
       </header>
 
-      {p.teams.length === 0 ? (
-        <p className="tp-muted tp-pad">{t.noAgents}</p>
+      {p.goals.length === 0 ? (
+        <div className="tp-nogoals tp-pad">
+          <p className="tp-muted">{t.noGoals}</p>
+          <Btn primary onClick={() => onNewGoal(p)}>
+            <Plus size={13} className="lucide-inline" aria-hidden="true" /> {t.newGoal}
+          </Btn>
+        </div>
       ) : (
         <div className="tp-teams">
-          {p.teams.map(team => (
-            <TeamRollup key={team.lead.slot.key} team={team} loops={loops} onOpen={onOpen} />
-          ))}
+          {liveGoals.length > 0 && (
+            <div className="tp-goals-section">
+              <div className="tp-section-head">{t.liveGoals} · {liveGoals.length}</div>
+              {liveGoals.map(goal => (
+                <GoalCard key={goal.lead.slot.key} goal={goal} loops={loops} onOpen={onOpen} />
+              ))}
+            </div>
+          )}
+          {archivedGoals.length > 0 && (
+            <div className="tp-goals-section">
+              <div className="tp-section-head">{t.archivedGoals} · {archivedGoals.length}</div>
+              {archivedGoals.map(goal => (
+                <GoalCard key={goal.lead.slot.key} goal={goal} loops={loops} onOpen={onOpen} />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -416,10 +457,22 @@ export default function TeamProjects() {
     queryFn: () => api.get<{ enabled: boolean; loops: Loop[] }>('/api/autonudge'),
     refetchInterval: visible ? POLL_MS : false,
   })
+  // Archived goals: GET /api/sessions lists every session file; a team-lead row
+  // with no live slot is an archived goal. Fetched at the list cap (200) — the
+  // page needs only the team-lead rows, which are few, and never paginates
+  // (an older archived goal past 200 rows is an acceptable omission for a
+  // read-only overview). Polled slower than the live surfaces: history changes
+  // only when a session is archived or deleted, not every turn.
+  const sessionsQ = useQuery({
+    queryKey: ['team-projects', 'sessions'],
+    queryFn: () => api.get<SessionsPage>('/api/sessions?limit=200'),
+    refetchInterval: visible ? POLL_MS * 4 : false,
+  })
   // A slots push is a cheap hint to refresh sooner than the poll.
   useAppEvents('slots', () => {
     void slotsQ.refetch()
     void foldersQ.refetch()
+    void sessionsQ.refetch()
   })
 
   const createProject = useMutation({
@@ -447,28 +500,53 @@ export default function TeamProjects() {
   })
 
   const loops = loopsQ.data?.loops ?? []
+  const sessions: ArchivedSession[] = Array.isArray(sessionsQ.data?.sessions)
+    ? (sessionsQ.data as SessionsPage).sessions
+    : []
   const projects = useMemo(
     () =>
       buildFolderProjects(
         Array.isArray(foldersQ.data) ? foldersQ.data : [],
         Array.isArray(slotsQ.data) ? slotsQ.data : [],
         loops,
+        sessions,
       ),
-    [foldersQ.data, slotsQ.data, loops],
+    [foldersQ.data, slotsQ.data, loops, sessions],
   )
   const shown = useMemo(() => {
     const q = filter.trim().toLocaleLowerCase()
     if (!q) return projects
     return projects.filter(p =>
-      [p.folder.name, ...p.repos, p.defaultAgent, ...p.teams.map(team => team.lead.slot.title)]
+      [p.folder.name, ...p.repos, p.defaultAgent, ...p.goals.map(goal => goal.lead.slot.title)]
         .some(v => (v || '').toLocaleLowerCase().includes(q)),
     )
   }, [projects, filter])
   const current = shown.find(p => p.folder.id === selected) ?? shown[0] ?? null
 
   const openSession = (slotKey: string) => openChat({ slotKey })
-  const openProject = (p: FolderProject) =>
-    openChat({ agent: p.defaultAgent || TEAM_LEAD_AGENT, autoSend: false })
+
+  // New goal: an UNSENT draft team-lead session filed in the project's folder.
+  // openChat alone cannot do this — ChatLaunchOptions carries no folder — so we
+  // create the slot through POST /api/chat/slots, which files it into the
+  // folder AT BIRTH (core `api_chat_slot_create` reads `folder_id`) without
+  // sending anything, then navigate into that slot. The person types and sends
+  // the first turn themselves, which is exactly an unsent draft bound to the
+  // team lead and sitting in the project. The app never re-files an existing
+  // session: this is a brand-new slot it is creating.
+  const newGoal = useMutation({
+    mutationFn: (p: FolderProject) =>
+      api.post<Slot>('/api/chat/slots', {
+        agent: p.defaultAgent || TEAM_LEAD_AGENT,
+        folder_id: p.folder.id,
+      }),
+    onSuccess: (slot, p) => {
+      void qc.invalidateQueries({ queryKey: ['team-projects', 'slots'] })
+      // Land the person in the freshly-created, still-empty session. autoSend
+      // is irrelevant with no message — the draft is the empty composer.
+      openChat({ slotKey: slot?.key, agent: p.defaultAgent || TEAM_LEAD_AGENT, autoSend: false })
+    },
+  })
+  const openNewGoal = (p: FolderProject) => newGoal.mutate(p)
   // Folder settings — including the directory and the read-only instruction
   // dirs — live in the native chat sidebar, not an app-routable surface. The
   // app only READS folders here, so it hands the person off to the chat page
@@ -524,7 +602,7 @@ export default function TeamProjects() {
                   p={current}
                   loops={loops}
                   onOpen={openSession}
-                  onOpenProject={openProject}
+                  onNewGoal={openNewGoal}
                   onSettings={openSettings}
                 />
               ) : (
