@@ -1,0 +1,23 @@
+{
+  "name": "team-projects",
+  "version": "0.1.0",
+  "displayName": "Projects",
+  "description": "Every kirocrew-team-lead session as a project, with its sub-leads, workers, loop progress and PRs grouped under it.",
+  "author": "kyle",
+  "iconPath": "assets/icon.png",
+  "tags": ["agents", "orchestration", "visualization"],
+  "ui": {
+    "entry": "dist/index.mjs",
+    "pages": [
+      {
+        "route": "/apps/team-projects",
+        "label": "Projects",
+        "icon": "FolderKanban"
+      }
+    ]
+  },
+  "permissions": {
+    "api": ["/api/chat/slots", "/api/autonudge"],
+    "events": ["slots"]
+  }
+}
