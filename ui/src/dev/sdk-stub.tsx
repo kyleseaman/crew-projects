@@ -63,6 +63,22 @@ const api: AppApi = {
   async post<T>(path: string, body?: unknown) {
     // eslint-disable-next-line no-console
     console.info('[sdk-stub] POST', path, body)
+    if (route(path) === '/api/chat/folders') {
+      // Mirror the create response: core echoes back the stored folder. The
+      // harness never persists it (the folders fixture is static), so the new
+      // id just lets the UI's onSuccess selection path run.
+      const b = (body as Record<string, unknown>) || {}
+      const created: Folder = {
+        id: `f-new-${Math.random().toString(36).slice(2, 8)}`,
+        name: String(b.name || 'New project'),
+        parent_id: null,
+        project_dir: typeof b.project_dir === 'string' ? b.project_dir : '',
+        extra_repos: Array.isArray(b.extra_repos) ? (b.extra_repos as string[]) : undefined,
+        default_agent: typeof b.default_agent === 'string' ? b.default_agent : '',
+        history_count: 0,
+      }
+      return created as unknown as T
+    }
     return {} as T
   },
   async put<T>() {
@@ -99,7 +115,7 @@ export function useAppInfo(): AppInfo {
   return {
     name: 'team-projects',
     version: '0.1.0',
-    permissions: { api: ['/api/chat/slots', '/api/autonudge'], events: ['slots'] },
+    permissions: { api: ['/api/chat/slots', '/api/chat/folders', '/api/autonudge'], events: ['slots'] },
     active: true,
   }
 }
@@ -110,6 +126,15 @@ export function useChatLauncher(): { openChat: (opts?: ChatLaunchOptions) => voi
       // eslint-disable-next-line no-console
       console.info('[sdk-stub] openChat', opts)
     },
+  }
+}
+
+/** Host navigation. In the harness it only logs; the real host routes to the
+ *  named Kiro Crew path (e.g. `/chat`, where the folder settings live). */
+export function useNavigate(): (path: string) => void {
+  return (path: string) => {
+    // eslint-disable-next-line no-console
+    console.info('[sdk-stub] navigate', path)
   }
 }
 

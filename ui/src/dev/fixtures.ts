@@ -14,14 +14,21 @@
  */
 import type { Loop, Slot } from '../model'
 
-/** The /api/chat/folders response shape (reserved for later steps). The app
- *  does not read folders today; the fixture documents the shape so a later
- *  step can wire it without re-deriving the contract. */
+/** The GET /api/chat/folders row shape (origin/main). Only the fields the app
+ *  reads are typed here; a real folder carries more (color, icon, order,
+ *  hidden, tags, owner_app, the computed history_count) that the app ignores.
+ *  `extra_repos` is the OPTIONAL multi-repo field sibling item C is adding to
+ *  core — present on one fixture, absent on the rest, so both the multi-repo
+ *  header and the single-project_dir degrade are screenshotted. */
 export interface Folder {
   id: string
   name: string
   parent_id?: string | null
-  session_keys?: string[]
+  project_dir?: string
+  extra_repos?: string[]
+  default_agent?: string
+  steering_dirs?: string[]
+  history_count?: number
 }
 
 const now = Date.now()
@@ -50,6 +57,7 @@ const parserProject: Slot[] = [
     agent: 'kirocrew-team-lead',
     title: 'Verify telemetry parsers',
     project: '/Users/kyle/Development/trackout-turbo',
+    folder_id: 'f-parsers',
     running: false,
     last_activity_ts: ago(3),
     last_message: 'Round 3 corrections merged. Patrolling the two open items.',
@@ -107,6 +115,7 @@ const brakingProject: Slot[] = [
     agent: 'kirocrew-team-lead',
     title: 'TrackOut braking coaching',
     project: '/Users/kyle/Development/trackout-turbo',
+    folder_id: 'f-braking',
     running: false,
     last_activity_ts: ago(8),
     last_message: 'Wave 1 dispatched. Loop will pick up wave 2 as PRs merge.',
@@ -152,6 +161,7 @@ const codexProject: Slot[] = [
     agent: 'kirocrew-team-lead',
     title: 'Codex effort controls',
     project: '/Users/kyle/Development/KiroCrew',
+    folder_id: 'f-codex',
     running: false,
     last_activity_ts: ago(120),
     last_message: 'Scoping the composer model + effort control work.',
@@ -183,9 +193,55 @@ export const autonudgeFixture: { enabled: boolean; loops: Loop[] } = {
   loops: loopsFixture,
 }
 
-/** Reserved for later steps that render folders. The app does not read this
- *  today; it documents the /api/chat/folders shape. */
+/**
+ * GET /api/chat/folders. A project is a top-level folder. The fixtures exercise
+ * every project-page state the header can draw:
+ *   - f-parsers: MULTI-REPO (project_dir + extra_repos) with read-only
+ *     instructions (steering_dirs the app shows but never writes) and one
+ *     nested sub-folder (sub-team organisation the project LIST hides).
+ *   - f-braking: a single-repo project, no extra_repos (the degrade path).
+ *   - f-codex:   a single-repo project with no team sessions attached yet.
+ *   - f-unset:   NO project_dir -> the project page shows the Set-directory
+ *                prompt and the app NEVER guesses a path.
+ */
 export const foldersFixture: Folder[] = [
-  { id: 'f-parsers', name: 'Verify telemetry parsers', parent_id: null, session_keys: ['L-parsers'] },
-  { id: 'f-braking', name: 'TrackOut braking coaching', parent_id: null, session_keys: ['L-braking'] },
+  {
+    id: 'f-parsers',
+    name: 'Verify telemetry parsers',
+    parent_id: null,
+    project_dir: '/Users/kyle/Development/trackout-turbo',
+    extra_repos: ['/Users/kyle/Development/trackout-telemetry-core'],
+    default_agent: 'kirocrew-team-lead',
+    steering_dirs: ['/Users/kyle/Development/trackout-turbo/.standards', '/Users/kyle/org-standards'],
+    history_count: 4,
+  },
+  {
+    id: 'f-parsers-ref',
+    name: 'Reference parser verification',
+    parent_id: 'f-parsers',
+    history_count: 2,
+  },
+  {
+    id: 'f-braking',
+    name: 'TrackOut braking coaching',
+    parent_id: null,
+    project_dir: '/Users/kyle/Development/trackout-turbo',
+    default_agent: 'kirocrew-team-lead',
+    history_count: 3,
+  },
+  {
+    id: 'f-codex',
+    name: 'Codex effort controls',
+    parent_id: null,
+    project_dir: '/Users/kyle/Development/KiroCrew',
+    default_agent: 'kirocrew-team-lead',
+    history_count: 1,
+  },
+  {
+    id: 'f-unset',
+    name: 'Mobile companion app',
+    parent_id: null,
+    default_agent: 'kirocrew-team-lead',
+    history_count: 0,
+  },
 ]

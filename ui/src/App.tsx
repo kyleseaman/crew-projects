@@ -1,9 +1,35 @@
 import { useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { useAppApi, useAppEvents, useAppInfo, useChatLauncher, fmtRelative } from '@kirocrew/app-sdk'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useAppApi, useAppEvents, useAppInfo, useChatLauncher, useNavigate, fmtRelative } from '@kirocrew/app-sdk'
 import { Badge, Btn, Clickable, EmptyState, ErrorNotice, PageHeader, SearchInput, Skeleton } from '@kirocrew/app-sdk/ui'
-import { ChevronDown, ChevronRight, FolderKanban, GitPullRequest, Plus, RefreshCw, Users } from 'lucide-react'
-import { buildProjects, loopText, TEAM_LEAD_AGENT, type Loop, type Member, type Project, type Slot, type SourceLink, type Status } from './model'
+import {
+  BookText,
+  ChevronDown,
+  ChevronRight,
+  FolderGit2,
+  FolderKanban,
+  GitPullRequest,
+  Plus,
+  RefreshCw,
+  Settings,
+  Users,
+  X,
+} from 'lucide-react'
+import {
+  buildFolderProjects,
+  loopText,
+  repoName,
+  DEFAULT_PROJECT_AGENT,
+  TEAM_LEAD_AGENT,
+  type Folder,
+  type FolderProject,
+  type Loop,
+  type Member,
+  type Project,
+  type Slot,
+  type SourceLink,
+  type Status,
+} from './model'
 import { t } from './strings'
 import { css } from './styles'
 
@@ -52,8 +78,13 @@ function LoopLine({ loop }: { loop: Loop | null }) {
   )
 }
 
-function ProjectRow({ p, selected, onSelect }: { p: Project; selected: boolean; onSelect: () => void }) {
-  const s = p.lead.slot
+/** One project row in the sidebar list. A project is a folder. */
+function ProjectRow({ p, selected, onSelect }: { p: FolderProject; selected: boolean; onSelect: () => void }) {
+  const teamCount = p.teams.length
+  const reposLabel = p.needsDir
+    ? t.setDirectoryTitle
+    : p.repos.map(repoName).join(' · ')
+  const prs = dedupePrs(p.teams)
   return (
     <Clickable
       className={`tp-prow ${selected ? 'tp-prow-sel' : ''}`}
@@ -62,22 +93,34 @@ function ProjectRow({ p, selected, onSelect }: { p: Project; selected: boolean; 
     >
       <div className="tp-row-top">
         <StatusDot status={p.status} />
-        <span className="tp-title">{s.title || t.untitled}</span>
-        <span className="tp-muted tp-nowrap">{when(p.updated)}</span>
+        <span className="tp-title">{p.folder.name}</span>
+        {p.updated && <span className="tp-muted tp-nowrap">{when(p.updated)}</span>}
       </div>
       <div className="tp-muted tp-ellipsis tp-indent">
-        {[p.loop ? t.loop(loopText(p.loop)) : '', p.repo, p.memberCount ? t.agents(p.memberCount) : '']
+        {[reposLabel, teamCount ? t.agents(projectAgentCount(p)) : '']
           .filter(Boolean)
           .join(' · ')}
       </div>
-      {p.prs.length > 0 && (
+      {prs.length > 0 && (
         <div className="tp-chips tp-indent">
-          {p.prs.slice(0, 3).map(l => <PrChip key={l.url} link={l} />)}
-          {p.prs.length > 3 && <span className="tp-muted">+{p.prs.length - 3}</span>}
+          {prs.slice(0, 3).map(l => <PrChip key={l.url} link={l} />)}
+          {prs.length > 3 && <span className="tp-muted">+{prs.length - 3}</span>}
         </div>
       )}
     </Clickable>
   )
+}
+
+/** Count every agent across a project's team rollups (lead + members). */
+function projectAgentCount(p: FolderProject): number {
+  return p.teams.reduce((n, team) => n + 1 + team.memberCount, 0)
+}
+
+/** PRs de-duplicated across every team in a project. */
+function dedupePrs(teams: Project[]): SourceLink[] {
+  const seen = new Map<string, SourceLink>()
+  for (const team of teams) for (const l of team.prs) if (!seen.has(l.url)) seen.set(l.url, l)
+  return [...seen.values()]
 }
 
 function MemberRow({ m, role, indent, onOpen }: { m: Member; role: string; indent?: boolean; onOpen: (key: string) => void }) {
@@ -102,58 +145,55 @@ function MemberRow({ m, role, indent, onOpen }: { m: Member; role: string; inden
   )
 }
 
-function ProjectDetail({ p, loops, onOpen }: { p: Project; loops: Loop[]; onOpen: (key: string) => void }) {
+/** One team rollup (a team-lead and everything it dispatched) inside a project. */
+function TeamRollup({ team, loops, onOpen }: { team: Project; loops: Loop[]; onOpen: (key: string) => void }) {
   const [workersOpen, setWorkersOpen] = useState(true)
-  const s = p.lead.slot
+  const s = team.lead.slot
   const subLoop = (key: string) => loops.find(l => l.slot_key === key && l.active) ?? null
   return (
-    <div className="tp-detail">
+    <div className="tp-team">
       <div className="tp-lead">
         <div className="tp-lead-body">
           <div className="tp-muted">{t.lead} · {TEAM_LEAD_AGENT} · {when(s.last_activity_ts || s.last_ts || '')}</div>
-          <h2 className="tp-h2">{s.title || t.untitled}</h2>
+          <h3 className="tp-h3">{s.title || t.untitled}</h3>
           <div className="tp-muted tp-row-top tp-wrap">
-            <Badge variant={STATUS_VARIANT[p.status]}>{t.status[p.status]}</Badge>
-            <LoopLine loop={p.loop} />
-            {p.memberCount > 0 && <span>{t.agents(p.memberCount)} · {t.active(p.activeCount)}</span>}
+            <Badge variant={STATUS_VARIANT[team.status]}>{t.status[team.status]}</Badge>
+            <LoopLine loop={team.loop} />
+            {team.memberCount > 0 && <span>{t.agents(team.memberCount)} · {t.active(team.activeCount)}</span>}
           </div>
           {s.last_message && <p className="tp-last tp-clamp">{s.last_message}</p>}
-          <div className="tp-chips">
-            {p.repo && <span className="tp-chip">{p.repo}</span>}
-            {p.prs.map(l => <PrChip key={l.url} link={l} />)}
-          </div>
         </div>
         <Btn primary onClick={() => onOpen(s.key)}>{t.openLead}</Btn>
       </div>
 
-      {p.memberCount === 0 ? (
+      {team.memberCount === 0 ? (
         <p className="tp-muted tp-pad">{t.noAgents}</p>
       ) : (
         <div className="tp-table" role="list">
           <div className="tp-thead" aria-hidden="true">
             <span>{t.task}</span><span>{t.step}</span><span>{t.prs}</span><span>{t.updated}</span>
           </div>
-          {p.subTeams.map(team => (
-            <div key={team.lead.slot.key} role="listitem">
+          {team.subTeams.map(sub => (
+            <div key={sub.lead.slot.key} role="listitem">
               <div className="tp-group">
                 <Users size={12} aria-hidden="true" />
-                {t.subTeam} · {team.lead.slot.title || t.untitled}
+                {t.subTeam} · {sub.lead.slot.title || t.untitled}
                 <span className="tp-muted">
-                  <LoopLine loop={subLoop(team.lead.slot.key)} />
+                  <LoopLine loop={subLoop(sub.lead.slot.key)} />
                 </span>
               </div>
-              <MemberRow m={team.lead} role={t.subLead} onOpen={onOpen} />
-              {team.workers.map(w => <MemberRow key={w.slot.key} m={w} role={t.worker} indent onOpen={onOpen} />)}
+              <MemberRow m={sub.lead} role={t.subLead} onOpen={onOpen} />
+              {sub.workers.map(w => <MemberRow key={w.slot.key} m={w} role={t.worker} indent onOpen={onOpen} />)}
             </div>
           ))}
-          {p.workers.length > 0 && (
+          {team.workers.length > 0 && (
             <div role="listitem">
               <Clickable className="tp-group tp-group-btn" onClick={() => setWorkersOpen(o => !o)} aria-expanded={workersOpen}>
                 {workersOpen ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}
-                {t.workers} · {p.workers.length}
-                <span className="tp-muted">{t.active(p.workers.filter(w => w.status !== 'idle').length)}</span>
+                {t.workers} · {team.workers.length}
+                <span className="tp-muted">{t.active(team.workers.filter(w => w.status !== 'idle').length)}</span>
               </Clickable>
-              {workersOpen && p.workers.map(w => <MemberRow key={w.slot.key} m={w} role={t.worker} onOpen={onOpen} />)}
+              {workersOpen && team.workers.map(w => <MemberRow key={w.slot.key} m={w} role={t.worker} onOpen={onOpen} />)}
             </div>
           )}
         </div>
@@ -162,14 +202,210 @@ function ProjectDetail({ p, loops, onOpen }: { p: Project; loops: Loop[]; onOpen
   )
 }
 
+/** The project page: the folder header (repos, default agent, read-only
+ *  instructions + a settings link, or a Set-directory prompt), then every
+ *  team rollup attached to the project. */
+function ProjectPage({
+  p,
+  loops,
+  onOpen,
+  onOpenProject,
+  onSettings,
+}: {
+  p: FolderProject
+  loops: Loop[]
+  onOpen: (key: string) => void
+  onOpenProject: (p: FolderProject) => void
+  onSettings: (p: FolderProject) => void
+}) {
+  return (
+    <div className="tp-detail">
+      <header className="tp-phead">
+        <div className="tp-phead-top">
+          <div className="tp-phead-title">
+            <FolderKanban size={18} aria-hidden="true" />
+            <h2 className="tp-h2">{p.folder.name}</h2>
+          </div>
+          <div className="tp-phead-actions">
+            <Btn onClick={() => onSettings(p)}>
+              <Settings size={13} className="lucide-inline" aria-hidden="true" /> {t.folderSettings}
+            </Btn>
+            <Btn primary onClick={() => onOpenProject(p)}>{t.openProject}</Btn>
+          </div>
+        </div>
+
+        {p.needsDir ? (
+          <div className="tp-setdir" role="note">
+            <div className="tp-setdir-body">
+              <strong className="tp-setdir-title">{t.setDirectoryTitle}</strong>
+              <p className="tp-muted">{t.setDirectoryBody}</p>
+            </div>
+            <Btn onClick={() => onSettings(p)}>{t.setDirectory}</Btn>
+          </div>
+        ) : (
+          <dl className="tp-meta">
+            <div className="tp-meta-item">
+              <dt className="tp-meta-label">
+                <FolderGit2 size={12} aria-hidden="true" /> {p.repos.length === 1 ? t.oneRepo : t.nRepos(p.repos.length)}
+              </dt>
+              <dd className="tp-meta-val tp-chips">
+                {p.repos.map(r => (
+                  <span key={r} className="tp-chip tp-repo" title={r}>{repoName(r)}</span>
+                ))}
+              </dd>
+            </div>
+            <div className="tp-meta-item">
+              <dt className="tp-meta-label"><Users size={12} aria-hidden="true" /> {t.defaultAgentHeader}</dt>
+              <dd className="tp-meta-val"><span className="tp-chip">{p.defaultAgent}</span></dd>
+            </div>
+            <div className="tp-meta-item tp-meta-wide">
+              <dt className="tp-meta-label">
+                <BookText size={12} aria-hidden="true" /> {t.instructions}
+                <span className="tp-muted tp-ro">· {t.instructionsReadOnly}</span>
+              </dt>
+              <dd className="tp-meta-val">
+                {p.instructions.length === 0 ? (
+                  <span className="tp-muted">{t.noInstructions}</span>
+                ) : (
+                  <ul className="tp-instr">
+                    {p.instructions.map(d => <li key={d} className="tp-chip tp-instr-item" title={d}>{d}</li>)}
+                  </ul>
+                )}
+              </dd>
+            </div>
+          </dl>
+        )}
+      </header>
+
+      {p.teams.length === 0 ? (
+        <p className="tp-muted tp-pad">{t.noAgents}</p>
+      ) : (
+        <div className="tp-teams">
+          {p.teams.map(team => (
+            <TeamRollup key={team.lead.slot.key} team={team} loops={loops} onOpen={onOpen} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface NewProjectResult {
+  name: string
+  directories: string[]
+}
+
+/** The New-project dialog: a name, ONE OR MORE directories, and a fixed
+ *  default agent (kirocrew-team-lead). It NEVER guesses a directory — every
+ *  path is typed by the person. */
+function NewProjectDialog({
+  busy,
+  error,
+  onCancel,
+  onCreate,
+}: {
+  busy: boolean
+  error: string
+  onCancel: () => void
+  onCreate: (r: NewProjectResult) => void
+}) {
+  const [name, setName] = useState('')
+  const [dirs, setDirs] = useState<string[]>([''])
+  const [localError, setLocalError] = useState('')
+
+  const setDir = (i: number, v: string) => setDirs(ds => ds.map((d, j) => (j === i ? v : d)))
+  const addDir = () => setDirs(ds => [...ds, ''])
+  const removeDir = (i: number) => setDirs(ds => (ds.length === 1 ? ds : ds.filter((_, j) => j !== i)))
+
+  const submit = () => {
+    const trimmedName = name.trim()
+    if (!trimmedName) {
+      setLocalError(t.nameRequired)
+      return
+    }
+    setLocalError('')
+    const directories = dirs.map(d => d.trim()).filter(Boolean)
+    onCreate({ name: trimmedName, directories })
+  }
+
+  return (
+    <div className="tp-overlay" role="dialog" aria-modal="true" aria-label={t.newProjectTitle}>
+      <div className="tp-dialog">
+        <div className="tp-dialog-head">
+          <h2 className="tp-h2">{t.newProjectTitle}</h2>
+          <Clickable className="tp-iconbtn" onClick={onCancel} aria-label={t.cancel}>
+            <X size={16} aria-hidden="true" />
+          </Clickable>
+        </div>
+
+        <label className="tp-field">
+          <span className="tp-field-label">{t.projectName}</span>
+          <SearchInput
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder={t.projectNamePlaceholder}
+            aria-label={t.projectName}
+            autoFocus
+          />
+        </label>
+
+        <div className="tp-field">
+          <span className="tp-field-label">{t.directories}</span>
+          <span className="tp-muted">{t.directoriesHint}</span>
+          {dirs.map((d, i) => (
+            <div className="tp-dir-row" key={i}>
+              <SearchInput
+                value={d}
+                onChange={e => setDir(i, e.target.value)}
+                placeholder={t.directoryPlaceholder}
+                aria-label={`${t.directories} ${i + 1}`}
+              />
+              {dirs.length > 1 && (
+                <Clickable className="tp-iconbtn" onClick={() => removeDir(i)} aria-label={t.removeDirectory}>
+                  <X size={14} aria-hidden="true" />
+                </Clickable>
+              )}
+            </div>
+          ))}
+          <Btn onClick={addDir}><Plus size={13} className="lucide-inline" aria-hidden="true" /> {t.addDirectory}</Btn>
+        </div>
+
+        <div className="tp-field">
+          <span className="tp-field-label">{t.defaultAgentLabel}</span>
+          <span className="tp-chip tp-agent-fixed">{DEFAULT_PROJECT_AGENT}</span>
+          <span className="tp-muted">{t.defaultAgentHint(DEFAULT_PROJECT_AGENT)}</span>
+        </div>
+
+        {(localError || error) && (
+          <p className="tp-form-error" role="alert">{localError || error}</p>
+        )}
+
+        <div className="tp-dialog-foot">
+          <Btn onClick={onCancel}>{t.cancel}</Btn>
+          <Btn primary onClick={submit} disabled={busy}>{busy ? t.creating : t.createProject}</Btn>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function TeamProjects() {
   const api = useAppApi()
+  const qc = useQueryClient()
   const { active } = useAppInfo()
   const { openChat } = useChatLauncher()
+  const navigate = useNavigate()
   const [selected, setSelected] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState('')
   const visible = active !== false
 
+  const foldersQ = useQuery({
+    queryKey: ['team-projects', 'folders'],
+    queryFn: () => api.get<Folder[]>('/api/chat/folders'),
+    refetchInterval: visible ? POLL_MS : false,
+  })
   const slotsQ = useQuery({
     queryKey: ['team-projects', 'slots'],
     queryFn: () => api.get<Slot[]>('/api/chat/slots'),
@@ -181,66 +417,132 @@ export default function TeamProjects() {
     refetchInterval: visible ? POLL_MS : false,
   })
   // A slots push is a cheap hint to refresh sooner than the poll.
-  useAppEvents('slots', () => { void slotsQ.refetch() })
+  useAppEvents('slots', () => {
+    void slotsQ.refetch()
+    void foldersQ.refetch()
+  })
+
+  const createProject = useMutation({
+    mutationFn: async ({ name, directories }: NewProjectResult) => {
+      // Core stores ONE project_dir; additional directories ride in the
+      // optional `extra_repos` field that sibling item C is adding to core.
+      // Today's core ignores the extra field and keeps the first directory as
+      // project_dir — the app degrades cleanly either way. The default agent is
+      // always the team lead; the app never writes steering_dirs.
+      const [first, ...rest] = directories
+      const body: Record<string, unknown> = { name, default_agent: TEAM_LEAD_AGENT }
+      if (first) body.project_dir = first
+      if (rest.length) body.extra_repos = rest
+      return api.post<Folder>('/api/chat/folders', body)
+    },
+    onSuccess: created => {
+      setCreating(false)
+      setCreateError('')
+      if (created?.id) setSelected(created.id)
+      void qc.invalidateQueries({ queryKey: ['team-projects', 'folders'] })
+    },
+    onError: (e: unknown) => {
+      setCreateError(String((e as Error)?.message || e) || t.createProjectError)
+    },
+  })
 
   const loops = loopsQ.data?.loops ?? []
   const projects = useMemo(
-    () => buildProjects(Array.isArray(slotsQ.data) ? slotsQ.data : [], loops),
-    [slotsQ.data, loops],
+    () =>
+      buildFolderProjects(
+        Array.isArray(foldersQ.data) ? foldersQ.data : [],
+        Array.isArray(slotsQ.data) ? slotsQ.data : [],
+        loops,
+      ),
+    [foldersQ.data, slotsQ.data, loops],
   )
   const shown = useMemo(() => {
     const q = filter.trim().toLocaleLowerCase()
     if (!q) return projects
     return projects.filter(p =>
-      [p.lead.slot.title, p.repo, ...p.subTeams.map(s => s.lead.slot.title), ...p.workers.map(w => w.slot.title)]
+      [p.folder.name, ...p.repos, p.defaultAgent, ...p.teams.map(team => team.lead.slot.title)]
         .some(v => (v || '').toLocaleLowerCase().includes(q)),
     )
   }, [projects, filter])
-  const current = shown.find(p => p.lead.slot.key === selected) ?? shown[0] ?? null
+  const current = shown.find(p => p.folder.id === selected) ?? shown[0] ?? null
 
   const openSession = (slotKey: string) => openChat({ slotKey })
-  const newProject = () => openChat({ agent: TEAM_LEAD_AGENT, autoSend: false })
+  const openProject = (p: FolderProject) =>
+    openChat({ agent: p.defaultAgent || TEAM_LEAD_AGENT, autoSend: false })
+  // Folder settings — including the directory and the read-only instruction
+  // dirs — live in the native chat sidebar, not an app-routable surface. The
+  // app only READS folders here, so it hands the person off to the chat page
+  // (where the folder and its settings dialog live) rather than editing the
+  // folder itself; it must never write steering_dirs.
+  const openSettings = (_p: FolderProject) => navigate('/chat')
+
+  const loadError = foldersQ.error || slotsQ.error
+  const loading = foldersQ.isLoading || slotsQ.isLoading
 
   return (
     <>
       <style>{css}</style>
       <PageHeader
-        title={t.title}
-        subtitle={t.subtitle}
-        actions={<Btn primary onClick={newProject}><Plus size={14} className="lucide-inline" aria-hidden="true" /> {t.newProject}</Btn>}
+        title={t.projects}
+        subtitle={t.projectsSubtitle}
+        actions={
+          <Btn primary onClick={() => { setCreateError(''); setCreating(true) }}>
+            <Plus size={14} className="lucide-inline" aria-hidden="true" /> {t.newProjectTitle}
+          </Btn>
+        }
       />
       <div className="tp-root">
-        {slotsQ.error ? (
-          <ErrorNotice title={t.loadError} message={String((slotsQ.error as Error).message || slotsQ.error)} askAgent />
-        ) : slotsQ.isLoading ? (
+        {loadError ? (
+          <ErrorNotice title={t.foldersLoadError} message={String((loadError as Error).message || loadError)} askAgent />
+        ) : loading ? (
           <div className="tp-loading"><Skeleton className="tp-skel" /><Skeleton className="tp-skel" /><Skeleton className="tp-skel" /></div>
         ) : projects.length === 0 ? (
           <EmptyState
             icon={<FolderKanban size={28} />}
-            title={t.emptyTitle}
-            subtitle={t.emptyBody}
-            action={<Btn primary onClick={newProject}>{t.newProject}</Btn>}
+            title={t.projectsEmptyTitle}
+            subtitle={t.projectsEmptyBody}
+            action={<Btn primary onClick={() => { setCreateError(''); setCreating(true) }}>{t.newProjectTitle}</Btn>}
           />
         ) : (
           <div className="tp-split">
-            <aside className="tp-list" aria-label={t.title}>
-              <SearchInput value={filter} onChange={e => setFilter(e.target.value)} placeholder={t.search} aria-label={t.search} />
-              {shown.length === 0 && <p className="tp-muted tp-pad">{t.noMatch}</p>}
+            <aside className="tp-list" aria-label={t.projects}>
+              <SearchInput value={filter} onChange={e => setFilter(e.target.value)} placeholder={t.searchProjects} aria-label={t.searchProjects} />
+              {shown.length === 0 && <p className="tp-muted tp-pad">{t.noProjectMatch}</p>}
               {shown.map(p => (
                 <ProjectRow
-                  key={p.lead.slot.key}
+                  key={p.folder.id}
                   p={p}
-                  selected={current?.lead.slot.key === p.lead.slot.key}
-                  onSelect={() => setSelected(p.lead.slot.key)}
+                  selected={current?.folder.id === p.folder.id}
+                  onSelect={() => setSelected(p.folder.id)}
                 />
               ))}
             </aside>
             <main className="tp-main">
-              {current ? <ProjectDetail key={current.lead.slot.key} p={current} loops={loops} onOpen={openSession} /> : <p className="tp-muted">{t.selectHint}</p>}
+              {current ? (
+                <ProjectPage
+                  key={current.folder.id}
+                  p={current}
+                  loops={loops}
+                  onOpen={openSession}
+                  onOpenProject={openProject}
+                  onSettings={openSettings}
+                />
+              ) : (
+                <p className="tp-muted">{t.selectProjectHint}</p>
+              )}
             </main>
           </div>
         )}
       </div>
+
+      {creating && (
+        <NewProjectDialog
+          busy={createProject.isPending}
+          error={createError}
+          onCancel={() => { setCreating(false); setCreateError('') }}
+          onCreate={r => createProject.mutate(r)}
+        />
+      )}
     </>
   )
 }
