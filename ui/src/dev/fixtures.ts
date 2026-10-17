@@ -65,6 +65,10 @@ const parserProject: Slot[] = [
     last_activity_ts: ago(3),
     last_message: 'Round 3 corrections merged. Patrolling the two open items.',
     source_links: [PR(4506, { ci: 'passed', state: 'merged' })],
+    // Linked to a Slack channel: the lead watches it and dispatches a goal for
+    // each report -> a `slack` subscription row on the project.
+    slack_linked: true,
+    slack_channel: '#trackout-parsers',
   },
   {
     key: 'C-ref',
@@ -94,6 +98,10 @@ const parserProject: Slot[] = [
     last_activity_ts: ago(1),
     last_message: 'Opened PR #4511; checks running.',
     source_links: [PR(4511, { ci: 'running' })],
+    // A second channel link in the project, so the Channel links group shows
+    // more than one row.
+    slack_linked: true,
+    slack_channel: '#trackout-ci',
   },
   {
     key: 'W-correct',
@@ -439,9 +447,16 @@ export const sessionDocsFixture: SessionDoc[] = [
 export const sessionDocsPageFixture: { docs: SessionDoc[] } = { docs: sessionDocsFixture }
 
 export const loopsFixture: Loop[] = [
-  { slot_key: 'L-braking', active: true, cycle_count: 7, max_cycles: 300 },
-  { slot_key: 'L-parsers', active: false, cycle_count: 12, max_cycles: 300 },
-  { slot_key: 'C-ref', active: true, cycle_count: 2 },
+  // Braking lead: a long patrol loop (drives the project's working status).
+  { id: 'lp-braking', slot_key: 'L-braking', active: true, cycle_count: 7, max_cycles: 300, idle_secs: 300, next_due_ts: sec(-4), last_fire_ts: sec(8) },
+  // Parsers lead: a STOPPED loop — not a subscription (a stopped loop is not
+  // watching anything), so it must NOT appear in the Subscriptions panel.
+  { id: 'lp-parsers', slot_key: 'L-parsers', active: false, cycle_count: 12, max_cycles: 300, idle_secs: 300 },
+  // Parsers conductor: an ACTIVE monitor loop -> a monitor subscription row
+  // with a cadence and a next fire a few minutes out.
+  { id: 'lp-ref', slot_key: 'C-ref', active: true, cycle_count: 2, idle_secs: 900, next_due_ts: sec(-11), last_fire_ts: sec(4) },
+  // Parsers perf lead: a bounded monitor loop with progress against a cap.
+  { id: 'lp-perf', slot_key: 'L-parsers-perf', active: true, cycle_count: 18, max_cycles: 200, idle_secs: 3600, next_due_ts: sec(-50) },
 ]
 
 export const autonudgeFixture: { enabled: boolean; loops: Loop[] } = {

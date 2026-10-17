@@ -67,6 +67,38 @@ const VIEWS = [
       await page.waitForTimeout(250)
     },
   },
+  // The per-project SUBSCRIPTIONS panel: the active monitor loops and Slack
+  // channel links on the project's sessions, plus the honest "schedules
+  // unavailable" note (the app cannot read the person's crons). Selects the
+  // parsers project (two monitors, two channel links) and scrolls the panel in.
+  {
+    name: 'project-subscriptions',
+    width: 1280,
+    height: 1400,
+    prepare: async page => {
+      await clickProjectByName(page, 'Verify telemetry parsers')
+      const subs = page.locator('.tp-subs').first()
+      await subs.waitFor({ timeout: 10_000 })
+      await subs.scrollIntoViewIfNeeded()
+      await page.waitForTimeout(250)
+    },
+  },
+  // The Subscriptions panel's CALM empty state: a project with no watcher armed
+  // on any session (the Codex project has a lead but no loop and no Slack link),
+  // so the panel shows its one-line reassurance plus the always-present
+  // schedules-unavailable note — never a faked "no schedules" list.
+  {
+    name: 'project-subscriptions-empty',
+    width: 1280,
+    height: 900,
+    prepare: async page => {
+      await clickProjectByName(page, 'Codex effort controls')
+      const subs = page.locator('.tp-subs-empty').first()
+      await subs.waitFor({ timeout: 10_000 })
+      await subs.scrollIntoViewIfNeeded()
+      await page.waitForTimeout(250)
+    },
+  },
   // The New-project flow: name, one-or-more directories, fixed default agent.
   {
     name: 'new-project-dialog',

@@ -139,4 +139,38 @@ export const t = {
   },
   /** The accessible label for an inbox row's open action: project · session. */
   inboxOpen: (project: string, session: string) => `Open ${session} in ${project}`,
+
+  // --- Subscriptions (what is watching on the project's behalf) ------------
+  subscriptions: 'Subscriptions',
+  subscriptionsSubtitle: 'What is watching on this project’s behalf: schedules, monitors and channel links on its sessions.',
+  subscriptionsCount: (n: number) => (n === 1 ? '1 subscription' : `${n} subscriptions`),
+  /** The calm empty state — no watcher is armed on any of the project's sessions. */
+  subscriptionsEmpty: 'Nothing is watching this project yet.',
+  subscriptionsEmptyHint: 'Add a subscription to have a session act on a schedule, a monitor, or a channel without a prompt.',
+  /** The Add-subscription button, and the draft it seeds into the lead session. */
+  addSubscription: 'Add subscription',
+  /** The pre-filled (UNSENT) prompt the Add button drops into the lead session.
+   *  The agent sets the watch up with its own tools; the app creates nothing. */
+  addSubscriptionDraft:
+    'Set up a subscription for this project: e.g. watch a Slack channel and dispatch a goal for each bug report, or run a check every weekday at 9am. Tell me which signal to watch and what to do when it fires.',
+  /** Section heads inside the panel, by kind. */
+  subMonitors: 'Monitors',
+  subSlack: 'Channel links',
+  subSchedules: 'Schedules',
+  subMonitorsCount: (n: number) => (n === 1 ? '1 monitor loop' : `${n} monitor loops`),
+  subSlackCount: (n: number) => (n === 1 ? '1 channel link' : `${n} channel links`),
+  /** A monitor row's secondary line: cadence · progress (loops run n of max). */
+  subMonitorMeta: (cadence: string, progress: string) =>
+    [cadence, progress ? `loop ${progress}` : ''].filter(Boolean).join(' · '),
+  /** A monitor row's next-fire label; the time is appended by the UI. */
+  subNextFire: 'next',
+  /** A Slack row's secondary line: the linked channel. */
+  subSlackMeta: (channel: string) => (channel ? `Linked to ${channel}` : 'Linked to a channel'),
+  /** The honest UNAVAILABLE state for schedules: the app cannot read the
+   *  person's crons, so it says so rather than render an empty "no schedules". */
+  subSchedulesUnavailable: 'Schedules can’t be listed here',
+  subSchedulesUnavailableBody:
+    'Cron schedules are owned per session and aren’t readable from this app, so they can’t be shown. Open a session to see and manage its schedules.',
+  /** The accessible label for a subscription row's open action. */
+  subscriptionOpen: (session: string) => `Open ${session}`,
 }

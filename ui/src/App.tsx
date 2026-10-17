@@ -5,6 +5,7 @@ import { Badge, Btn, Clickable, EmptyState, ErrorNotice, PageHeader, SearchInput
 import {
   BellRing,
   BookText,
+  CalendarClock,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -13,12 +14,15 @@ import {
   FolderGit2,
   FolderKanban,
   GitPullRequest,
+  Hash,
   Inbox,
   Library,
   PauseCircle,
   Package,
   Plus,
+  Radar,
   RefreshCw,
+  Satellite,
   Settings,
   Users,
   X,
@@ -26,6 +30,8 @@ import {
 import {
   buildFolderProjects,
   buildInbox,
+  buildSubscriptions,
+  cronsAvailable,
   dedupeProjectPrs,
   loopText,
   projectArtifacts,
@@ -49,6 +55,8 @@ import {
   type Slot,
   type SourceLink,
   type Status,
+  type Subscription,
+  type SubscriptionKind,
 } from './model'
 import { t } from './strings'
 import { css } from './styles'
@@ -375,6 +383,128 @@ function LibrarySection({
   )
 }
 
+/** The icon for each subscription kind. Status color lives on the icon only
+ *  (no edge bars): a monitor and a channel link are informational, so both use
+ *  the muted token — these are "what is watching", not "what needs you". */
+const SUB_KIND_ICON: Record<SubscriptionKind, typeof Radar> = {
+  monitor: Radar,
+  slack: Hash,
+}
+
+/** One subscription row: a watcher armed on a project session. Opens the owning
+ *  session on click — the app only shows the watch, it never arms or edits it. */
+function SubscriptionRow({ sub, onOpen }: { sub: Subscription; onOpen: (key: string) => void }) {
+  const Icon = SUB_KIND_ICON[sub.kind]
+  const meta =
+    sub.kind === 'monitor' ? t.subMonitorMeta(sub.detail, sub.progress) : t.subSlackMeta(sub.detail)
+  return (
+    <Clickable
+      className="tp-sub-row"
+      onClick={() => onOpen(sub.slotKey)}
+      aria-label={t.subscriptionOpen(sub.sessionTitle || t.untitled)}
+    >
+      <Icon size={15} className="tp-sub-ico" aria-hidden="true" />
+      <div className="tp-sub-main">
+        <span className="tp-sub-name">{sub.sessionTitle || t.untitled}</span>
+        {meta && <span className="tp-muted tp-ellipsis">{meta}</span>}
+      </div>
+      {sub.kind === 'monitor' && sub.nextFire && (
+        <span className="tp-muted tp-nowrap">
+          {t.subNextFire} {when(sub.nextFire)}
+        </span>
+      )}
+    </Clickable>
+  )
+}
+
+/** The project's Subscriptions panel: the ACTIVE monitor loops and Slack links
+ *  on its sessions, plus an honest "schedules unavailable" note (the app cannot
+ *  read the person's crons). "Add subscription" opens an UNSENT draft in the
+ *  lead session — the agent sets the watch up with its own tools; the app
+ *  creates no cron, loop or link itself. When nothing is watching and no lead
+ *  exists to draft into, the panel shows a calm empty state. */
+function SubscriptionsSection({
+  subs,
+  canAdd,
+  onOpen,
+  onAdd,
+}: {
+  subs: Subscription[]
+  canAdd: boolean
+  onOpen: (key: string) => void
+  onAdd: () => void
+}) {
+  const monitors = subs.filter(s => s.kind === 'monitor')
+  const slack = subs.filter(s => s.kind === 'slack')
+  const schedulesAvailable = cronsAvailable()
+  const nothing = subs.length === 0
+
+  return (
+    <section className="tp-subs" aria-label={t.subscriptions}>
+      <div className="tp-subs-head">
+        <Satellite size={14} aria-hidden="true" />
+        <h3 className="tp-h3">{t.subscriptions}</h3>
+        <span className="tp-muted tp-subs-sub">{t.subscriptionsSubtitle}</span>
+        {canAdd && (
+          <Btn onClick={onAdd}>
+            <Plus size={13} className="lucide-inline" aria-hidden="true" /> {t.addSubscription}
+          </Btn>
+        )}
+      </div>
+
+      {nothing ? (
+        <div className="tp-subs-empty" role="note">
+          <span className="tp-subs-empty-title">{t.subscriptionsEmpty}</span>
+          <span className="tp-muted">{t.subscriptionsEmptyHint}</span>
+        </div>
+      ) : (
+        <>
+          {monitors.length > 0 && (
+            <div className="tp-subs-group">
+              <div className="tp-subs-grouphead">
+                <Radar size={12} aria-hidden="true" /> {t.subMonitors}
+                <span className="tp-muted">{t.subMonitorsCount(monitors.length)}</span>
+              </div>
+              <div className="tp-subs-list" role="list">
+                {monitors.map(s => (
+                  <SubscriptionRow key={`m-${s.slotKey}`} sub={s} onOpen={onOpen} />
+                ))}
+              </div>
+            </div>
+          )}
+          {slack.length > 0 && (
+            <div className="tp-subs-group">
+              <div className="tp-subs-grouphead">
+                <Hash size={12} aria-hidden="true" /> {t.subSlack}
+                <span className="tp-muted">{t.subSlackCount(slack.length)}</span>
+              </div>
+              <div className="tp-subs-list" role="list">
+                {slack.map(s => (
+                  <SubscriptionRow key={`s-${s.slotKey}`} sub={s} onOpen={onOpen} />
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Schedules: the app cannot read the person's crons, so this is always an
+          honest unavailable note rather than a faked or empty "no schedules". */}
+      <div className="tp-subs-group">
+        <div className="tp-subs-grouphead">
+          <CalendarClock size={12} aria-hidden="true" /> {t.subSchedules}
+        </div>
+        {schedulesAvailable ? null : (
+          <div className="tp-subs-unavail" role="note">
+            <strong className="tp-subs-unavail-title">{t.subSchedulesUnavailable}</strong>
+            <p className="tp-muted">{t.subSchedulesUnavailableBody}</p>
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
 /** The project page: the folder header (repos, default agent, read-only
  *  instructions + a settings link, or a Set-directory prompt), then every
  *  team rollup attached to the project, and the project's Library. */
@@ -382,18 +512,22 @@ function ProjectPage({
   p,
   loops,
   library,
+  subscriptions,
   onOpen,
   onOpenArtifact,
   onNewGoal,
   onSettings,
+  onAddSubscription,
 }: {
   p: FolderProject
   loops: Loop[]
   library: LibraryData
+  subscriptions: Subscription[]
   onOpen: (key: string) => void
   onOpenArtifact: (slug: string) => void
   onNewGoal: (p: FolderProject) => void
   onSettings: (p: FolderProject) => void
+  onAddSubscription: (p: FolderProject) => void
 }) {
   const liveGoals = p.goals.filter(g => !g.archived)
   const archivedGoals = p.goals.filter(g => g.archived)
@@ -485,6 +619,16 @@ function ProjectPage({
           )}
         </div>
       )}
+
+      <SubscriptionsSection
+        subs={subscriptions}
+        // Add-subscription drafts into the project's lead session, so it needs a
+        // live lead to open. A project with only archived goals (no live lead)
+        // has no session to seed the draft into, so the button is hidden there.
+        canAdd={liveGoals.length > 0}
+        onOpen={onOpen}
+        onAdd={() => onAddSubscription(p)}
+      />
 
       <LibrarySection
         prs={library.prs}
@@ -824,6 +968,23 @@ export default function TeamProjects() {
     }
   }, [current, currentFolderId, artifactsQ.data, artifactsQ.error, artifactsQ.isLoading, docsQ.data, docsQ.error, docsQ.isLoading])
 
+  // Subscriptions for the CURRENT project: the active monitor loops and
+  // Slack-linked sessions among the project's own sessions. Joined from data
+  // the app already holds — the loop list (/api/autonudge) and the slot list
+  // (/api/chat/slots, which carries slack_linked/slack_channel) — so it needs
+  // no new fetch. Crons are not joined: the app cannot read the person's crons
+  // (/api/crons scopes a GET to the calling app's own jobs), so the panel shows
+  // an honest unavailable row for schedules rather than a faked or empty list.
+  const slotsByKey = useMemo(() => {
+    const m = new Map<string, Slot>()
+    for (const s of Array.isArray(slotsQ.data) ? slotsQ.data : []) m.set(s.key, s)
+    return m
+  }, [slotsQ.data])
+  const subscriptions = useMemo(
+    () => (current ? buildSubscriptions(current.goals, slotsByKey, loops) : []),
+    [current, slotsByKey, loops],
+  )
+
   const openSession = (slotKey: string) => openChat({ slotKey })
   // Open an artifact at the host's read-only detail page (/artifacts/<slug>).
   // The app only LINKS to it — it never materializes, mutates or re-files it,
@@ -852,6 +1013,25 @@ export default function TeamProjects() {
     },
   })
   const openNewGoal = (p: FolderProject) => newGoal.mutate(p)
+
+  // Add subscription: open an UNSENT draft in the project's LEAD session,
+  // pre-filled with a prompt the person edits and sends. The app arms NOTHING
+  // itself — it never creates a cron, a monitor or a channel link; the agent
+  // sets the watch up with its own tools once the person sends the turn. The
+  // lead is the project's most-recent live goal lead (the one the person most
+  // likely means); openChat with autoSend:false drops the draft into its
+  // composer without sending. Hidden by the UI when the project has no live
+  // lead, so `lead` is always present here.
+  const addSubscription = (p: FolderProject) => {
+    const lead = p.goals.find(g => !g.archived)?.lead.slot
+    if (!lead?.key) return
+    openChat({
+      slotKey: lead.key,
+      agent: lead.agent || p.defaultAgent || TEAM_LEAD_AGENT,
+      message: t.addSubscriptionDraft,
+      autoSend: false,
+    })
+  }
   // Folder settings — including the directory and the read-only instruction
   // dirs — live in the native chat sidebar, not an app-routable surface. The
   // app only READS folders here, so it hands the person off to the chat page
@@ -909,10 +1089,12 @@ export default function TeamProjects() {
                   p={current}
                   loops={loops}
                   library={library}
+                  subscriptions={subscriptions}
                   onOpen={openSession}
                   onOpenArtifact={openArtifact}
                   onNewGoal={openNewGoal}
                   onSettings={openSettings}
+                  onAddSubscription={addSubscription}
                 />
               ) : (
                 <p className="tp-muted">{t.selectProjectHint}</p>

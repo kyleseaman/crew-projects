@@ -4,6 +4,9 @@ import {
   buildFolderProjects,
   buildInbox,
   buildProjects,
+  buildSubscriptions,
+  cadenceText,
+  cronsAvailable,
   dedupeProjectPrs,
   folderRepos,
   loopText,
@@ -14,6 +17,7 @@ import {
   type ArchivedSession,
   type Folder,
   type LibraryArtifact,
+  type Loop,
   type SessionDoc,
   type Slot,
 } from './model'
@@ -409,5 +413,147 @@ describe('buildInbox', () => {
     expect(item.slotKey).toBe('W')
     expect(item.projectName).toBe('Parent')
     expect(item.projectId).toBe('f')
+  })
+})
+
+// --- Subscriptions (per-project watchers) ----------------------------------
+
+/** Resolve a slot-by-key map the way App.tsx does, from the raw slot list. */
+const slotMap = (slots: Slot[]) => new Map(slots.map(s => [s.key, s]))
+
+describe('cadenceText', () => {
+  it('renders seconds, minutes and hours in whole units, singular where apt', () => {
+    expect(cadenceText(30)).toBe('every 30s')
+    expect(cadenceText(60)).toBe('every minute')
+    expect(cadenceText(900)).toBe('every 15 min')
+    expect(cadenceText(3600)).toBe('every hour')
+    expect(cadenceText(7200)).toBe('every 2 h')
+  })
+
+  it('is empty — never a guess — for a missing or non-positive cadence', () => {
+    expect(cadenceText(undefined)).toBe('')
+    expect(cadenceText(0)).toBe('')
+    expect(cadenceText(-5)).toBe('')
+  })
+})
+
+describe('cronsAvailable', () => {
+  it('is false: the app cannot list the person\'s crons (api/crons is app-scoped)', () => {
+    expect(cronsAvailable()).toBe(false)
+  })
+})
+
+describe('buildSubscriptions', () => {
+  const folders = [folder('f', { project_dir: '/p' })]
+
+  it('lists an active loop on a project session as a monitor, with cadence, progress and next fire', () => {
+    const slots = [
+      lead('L', { folder_id: 'f' }),
+      kid('W', 'L', { title: 'Watch CI' }),
+    ]
+    const loops: Loop[] = [
+      { id: 'lp1', slot_key: 'W', active: true, cycle_count: 7, max_cycles: 300, idle_secs: 900, next_due_ts: 1_700_000_000 },
+    ]
+    const [p] = buildFolderProjects(folders, slots, loops)
+    const subs = buildSubscriptions(p.goals, slotMap(slots), loops)
+    expect(subs).toHaveLength(1)
+    expect(subs[0].kind).toBe('monitor')
+    expect(subs[0].slotKey).toBe('W')
+    expect(subs[0].sessionTitle).toBe('Watch CI')
+    expect(subs[0].detail).toBe('every 15 min')
+    expect(subs[0].progress).toBe('7/300')
+    expect(subs[0].nextFire).toBe(new Date(1_700_000_000 * 1000).toISOString())
+  })
+
+  it('ignores a STOPPED loop — a subscription is a live watch', () => {
+    const slots = [lead('L', { folder_id: 'f' }), kid('W', 'L')]
+    const loops: Loop[] = [{ slot_key: 'W', active: false, cycle_count: 5 }]
+    const [p] = buildFolderProjects(folders, slots, loops)
+    expect(buildSubscriptions(p.goals, slotMap(slots), loops)).toEqual([])
+  })
+
+  it('lists a Slack-linked project session as a slack subscription carrying its channel', () => {
+    const slots = [
+      lead('L', { folder_id: 'f', slack_linked: true, slack_channel: '#trackout-bugs' }),
+    ]
+    const [p] = buildFolderProjects(folders, slots, [])
+    const subs = buildSubscriptions(p.goals, slotMap(slots), [])
+    expect(subs).toHaveLength(1)
+    expect(subs[0].kind).toBe('slack')
+    expect(subs[0].slotKey).toBe('L')
+    expect(subs[0].detail).toBe('#trackout-bugs')
+    expect(subs[0].progress).toBe('')
+    expect(subs[0].nextFire).toBe('')
+  })
+
+  it('orders monitors before slack rows, each group by session title', () => {
+    const slots = [
+      lead('L', { folder_id: 'f' }),
+      kid('Wb', 'L', { title: 'Beta watch', slack_linked: true, slack_channel: '#b' }),
+      kid('Wa', 'L', { title: 'Alpha watch', slack_linked: true, slack_channel: '#a' }),
+      kid('Wm2', 'L', { title: 'Zeta monitor' }),
+      kid('Wm1', 'L', { title: 'Gamma monitor' }),
+    ]
+    const loops: Loop[] = [
+      { slot_key: 'Wm2', active: true, idle_secs: 60 },
+      { slot_key: 'Wm1', active: true, idle_secs: 60 },
+    ]
+    const [p] = buildFolderProjects(folders, slots, loops)
+    const subs = buildSubscriptions(p.goals, slotMap(slots), loops)
+    expect(subs.map(s => s.kind)).toEqual(['monitor', 'monitor', 'slack', 'slack'])
+    expect(subs.map(s => s.sessionTitle)).toEqual(['Gamma monitor', 'Zeta monitor', 'Alpha watch', 'Beta watch'])
+  })
+
+  it('does NOT surface a loop or Slack link owned by a session OUTSIDE the project', () => {
+    // Two folders, each its own project. A loop and a Slack link sit on a
+    // session in folder g; they must not leak into folder f's subscriptions.
+    const twoFolders = [
+      folder('f', { project_dir: '/p/f' }),
+      folder('g', { project_dir: '/p/g' }),
+    ]
+    const slots = [
+      lead('Lf', { folder_id: 'f' }),
+      kid('Wf', 'Lf', { title: 'Mine' }),
+      lead('Lg', { folder_id: 'g', slack_linked: true, slack_channel: '#theirs' }),
+      kid('Wg', 'Lg', { title: 'Theirs' }),
+    ]
+    const loops: Loop[] = [
+      { slot_key: 'Wg', active: true, idle_secs: 300 }, // loop on the OTHER project's session
+      { slot_key: 'Wf', active: true, idle_secs: 300 }, // loop on THIS project's session
+    ]
+    const byKey = slotMap(slots)
+    const projects = buildFolderProjects(twoFolders, slots, loops)
+    const pf = projects.find(p => p.folder.id === 'f')!
+    const subs = buildSubscriptions(pf.goals, byKey, loops)
+    // Only the in-project loop (Wf). The foreign loop (Wg) and the foreign
+    // Slack link (Lg) are absent.
+    expect(subs.map(s => s.slotKey)).toEqual(['Wf'])
+    expect(subs.some(s => s.slotKey === 'Wg')).toBe(false)
+    expect(subs.some(s => s.kind === 'slack')).toBe(false)
+  })
+
+  it('leaves next fire empty rather than guess when the loop has no next_due_ts', () => {
+    const slots = [lead('L', { folder_id: 'f' }), kid('W', 'L')]
+    const loops: Loop[] = [{ slot_key: 'W', active: true, idle_secs: 60 }]
+    const [p] = buildFolderProjects(folders, slots, loops)
+    const [sub] = buildSubscriptions(p.goals, slotMap(slots), loops)
+    expect(sub.nextFire).toBe('')
+  })
+
+  it('returns no subscriptions when nothing is watching the project', () => {
+    const slots = [lead('L', { folder_id: 'f' }), kid('W', 'L', { running: true })]
+    const [p] = buildFolderProjects(folders, slots, [])
+    expect(buildSubscriptions(p.goals, slotMap(slots), [])).toEqual([])
+  })
+
+  it('counts a session carrying BOTH a loop and a Slack link as two rows', () => {
+    const slots = [
+      lead('L', { folder_id: 'f', title: 'Dual', slack_linked: true, slack_channel: '#dual' }),
+    ]
+    const loops: Loop[] = [{ slot_key: 'L', active: true, idle_secs: 120 }]
+    const [p] = buildFolderProjects(folders, slots, loops)
+    const subs = buildSubscriptions(p.goals, slotMap(slots), loops)
+    expect(subs.map(s => s.kind)).toEqual(['monitor', 'slack'])
+    expect(subs.every(s => s.slotKey === 'L')).toBe(true)
   })
 })

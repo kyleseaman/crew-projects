@@ -158,4 +158,30 @@ a.tp-chip:hover{border-color:var(--border-strong,var(--border));color:var(--text
 .tp-lib-skel{height:40px;border-radius:8px}
 .tp-lib-unavail{padding:12px 14px;border:1px dashed var(--border-strong,var(--border));border-radius:8px;background:var(--bg-elevated,var(--card))}
 .tp-lib-unavail-title{display:block;font-size:13px;color:var(--text-strong,var(--text))}
+
+/* Subscriptions — what is watching on the project's behalf (monitors, channel
+   links, schedules). Same quiet grouped-list language as the Library: hairline
+   dividers, muted icons, no colored edge bars — status color never appears
+   here because a watcher is informational, not a thing that needs you. */
+.tp-subs{border-top:1px solid var(--border);padding:16px;display:flex;flex-direction:column;gap:14px}
+.tp-subs-head{display:flex;align-items:center;gap:8px;color:var(--muted);flex-wrap:wrap}
+.tp-subs-head .tp-h3{color:var(--text-strong,var(--card-fg,var(--text)))}
+.tp-subs-sub{flex:1;min-width:120px}
+.tp-subs-head .tp-subs-sub{margin-left:0}
+.tp-subs-group{display:flex;flex-direction:column;gap:6px}
+.tp-subs-grouphead{display:flex;align-items:center;gap:6px;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600}
+.tp-subs-grouphead .tp-muted{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:400}
+.tp-subs-list{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.tp-subs-row{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);min-width:0;cursor:pointer}
+.tp-subs-list > :last-child{border-bottom:none}
+.tp-subs-row:hover{background:var(--bg-hover)}
+.tp-subs-row:focus-visible{outline:2px solid var(--ring,var(--accent));outline-offset:-2px}
+.tp-sub-ico{flex:none;color:var(--muted)}
+.tp-sub-main{min-width:0;display:flex;flex-direction:column;gap:1px;flex:1}
+.tp-sub-name{font-size:13px;font-weight:500;color:var(--text-strong,var(--text));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tp-subs-empty{display:flex;flex-direction:column;gap:2px;padding:12px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg-elevated,var(--card))}
+.tp-subs-empty-title{font-size:13px;color:var(--text-strong,var(--text))}
+.tp-subs-unavail{padding:12px 14px;border:1px dashed var(--border-strong,var(--border));border-radius:8px;background:var(--bg-elevated,var(--card))}
+.tp-subs-unavail-title{display:block;font-size:13px;color:var(--text-strong,var(--text))}
+.tp-subs-unavail p{margin:4px 0 0}
 `

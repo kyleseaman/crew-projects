@@ -36,13 +36,30 @@ export interface Slot {
    *  project's agent activity to its folder. */
   folder_id?: string
   source_links?: SourceLink[]
+  /** True when this session mirrors to / is driven by a Slack channel. From the
+   *  `/api/chat/slots` payload (`state.serialize_slot` sets `slack_linked`);
+   *  read defensively so a payload without it degrades to not-linked. */
+  slack_linked?: boolean
+  /** The visible Slack channel the session is linked to, when `slack_linked`.
+   *  Display only — a redacted channel name/id the host already computed. */
+  slack_channel?: string
 }
 
 export interface Loop {
+  /** The loop's own id (origin/main `NudgeLoop.id`). */
+  id?: string
   slot_key: string
   active: boolean
   cycle_count?: number
   max_cycles?: number
+  /** Seconds between fires (`NudgeLoop.idle_secs`, the cadence). */
+  idle_secs?: number
+  /** Epoch seconds of the next scheduled fire (`NudgeLoop.next_due_ts`); 0 when
+   *  none is scheduled (just-fired, or a legacy row). */
+  next_due_ts?: number
+  /** Epoch seconds this loop last delivered (`NudgeLoop.last_fire_ts`); 0 when
+   *  it never has. */
+  last_fire_ts?: number
 }
 
 export type Status = 'needs_you' | 'stalled' | 'working' | 'idle'
@@ -691,4 +708,167 @@ export function buildInbox(projects: FolderProject[]): InboxItem[] {
   return items.sort(
     (a, b) => INBOX_RANK[b.kind] - INBOX_RANK[a.kind] || b.updated.localeCompare(a.updated),
   )
+}
+
+/* ---------------------------------------------------------------------------
+ * Subscriptions — what is watching on a project's behalf.
+ *
+ * Cursor's "Projects" let a coordinator act on signals without a prompt: watch
+ * a channel, run on a schedule, follow PRs. Kiro Crew already has the pieces —
+ * monitor loops (`/api/autonudge`), Slack-linked sessions (`/api/chat/slots`),
+ * and cron schedules (`/api/crons`). This panel SHOWS what is already armed on
+ * the project's own sessions; it never arms anything itself (an "Add
+ * subscription" button opens an unsent draft in the lead session, and the
+ * agent sets it up with its own tools).
+ *
+ * A subscription is attributed to a project when its OWNING SESSION belongs to
+ * the project — the same `projectSessionKeys` membership the Library uses. So
+ * a loop or a Slack link on a session outside the project never appears here.
+ *
+ * Three kinds, by what the app can actually read:
+ *
+ *   monitor  — an ACTIVE loop (`/api/autonudge`) on a project session. The
+ *              reduced legacy read has no owner gate and no app scope, so every
+ *              loop is visible: cadence (`idle_secs`), progress
+ *              (`cycle_count`/`max_cycles`) and the next fire (`next_due_ts`)
+ *              are all real.
+ *   slack    — a session the host reports `slack_linked` for, carrying the
+ *              `slack_channel` it is bound to. From the slot list the app
+ *              already reads.
+ *   schedule — a cron. The `/api/crons` GET is scoped to the CALLING APP's own
+ *              jobs (`app_owner_name(created_by) == app`), so a team-projects
+ *              token sees only crons IT created — and it creates none. The
+ *              person's crons are therefore invisible to the app. Rather than
+ *              grant a permission that returns an empty list and read as "no
+ *              schedules" (a lie), the schedule kind degrades to an explicit
+ *              UNAVAILABLE row. See `cronsAvailable` below.
+ * ------------------------------------------------------------------------- */
+
+/** Which kind of watcher a subscription row is. */
+export type SubscriptionKind = 'monitor' | 'slack'
+
+/** One subscription row: a watcher armed on one of the project's sessions. */
+export interface Subscription {
+  /** The owning session's slot key — a row opens it with `openChat({ slotKey })`. */
+  slotKey: string
+  /** The owning session's title, so the row names what is watching. */
+  sessionTitle: string
+  kind: SubscriptionKind
+  /** A one-line human description of the watch (cadence, channel). */
+  detail: string
+  /** Monitor only: how far the loop has run, e.g. "7/300" or "7". Empty for a
+   *  Slack row. */
+  progress: string
+  /** Monitor only: epoch-seconds of the next scheduled fire, as an ISO string
+   *  for the UI's relative-time helper. Empty when none is scheduled or for a
+   *  Slack row — never guessed. */
+  nextFire: string
+}
+
+/** The loops that belong to a project, keyed for lookup. Internal. */
+function activeLoopsByKey(loops: Loop[]): Map<string, Loop> {
+  // Prefer the ACTIVE loop for a slot — a subscription is a live watch. A
+  // stopped loop is not watching anything, so it is not a subscription.
+  const out = new Map<string, Loop>()
+  for (const l of loops) {
+    if (!l.active) continue
+    const key = (l.slot_key || '').trim()
+    if (key && !out.has(key)) out.set(key, l)
+  }
+  return out
+}
+
+/** The monitor-loop cadence as a human cell, in whole units. Seconds under a
+ *  minute read as seconds, under an hour as minutes, else hours — coarse on
+ *  purpose, since a monitor cadence is a round interval. Empty when unknown. */
+export function cadenceText(idleSecs: number | undefined): string {
+  const s = typeof idleSecs === 'number' && Number.isFinite(idleSecs) ? Math.round(idleSecs) : 0
+  if (s <= 0) return ''
+  if (s < 60) return `every ${s}s`
+  if (s < 3600) {
+    const m = Math.round(s / 60)
+    return m === 1 ? 'every minute' : `every ${m} min`
+  }
+  const h = Math.round(s / 3600)
+  return h === 1 ? 'every hour' : `every ${h} h`
+}
+
+/** An epoch-seconds field (loop `next_due_ts` / `last_fire_ts`) as an ISO
+ *  string the UI formats with its relative-time helper. Empty (never a guess)
+ *  when the value is absent, non-positive or unparseable. */
+function epochToIso(secs: number | undefined): string {
+  if (typeof secs !== 'number' || !Number.isFinite(secs) || secs <= 0) return ''
+  return new Date(secs * 1000).toISOString()
+}
+
+/**
+ * The subscriptions a project owns, across every session it owns: the ACTIVE
+ * monitor loops on those sessions and the Slack-linked ones. Ordered monitors
+ * first (a cadence-driven watch is the strongest signal), then Slack links,
+ * each group by session title so the list is stable.
+ *
+ * `goals` yields the project's session keys (`projectSessionKeys`, live rollup
+ * plus archived goal leads); `slotsByKey` resolves each key to its slot for the
+ * title and Slack fields; `loops` is the `/api/autonudge` list. A key with no
+ * live slot (an archived goal lead) carries neither a loop nor a Slack link, so
+ * it contributes nothing — correct, since an archived goal is not watching.
+ *
+ * Crons are NOT joined here: the app cannot read the person's crons (see the
+ * section header). `cronsAvailable` reports that so the UI can show an honest
+ * unavailable row instead of a silent gap.
+ */
+export function buildSubscriptions(
+  goals: Project[],
+  slotsByKey: Map<string, Slot>,
+  loops: Loop[],
+): Subscription[] {
+  const ownedKeys = projectSessionKeys(goals)
+  const owned = new Set(ownedKeys)
+  const activeLoops = activeLoopsByKey(loops)
+
+  const monitors: Subscription[] = []
+  const slack: Subscription[] = []
+  for (const key of ownedKeys) {
+    const slot = slotsByKey.get(key)
+    const title = slot?.title || ''
+    const loop = activeLoops.get(key)
+    if (loop) {
+      monitors.push({
+        slotKey: key,
+        sessionTitle: title,
+        kind: 'monitor',
+        detail: cadenceText(loop.idle_secs),
+        progress: loopText(loop),
+        nextFire: epochToIso(loop.next_due_ts),
+      })
+    }
+    // Only a LIVE slot can carry a Slack link; an archived goal lead has no slot.
+    if (slot && slot.slack_linked) {
+      slack.push({
+        slotKey: key,
+        sessionTitle: title,
+        kind: 'slack',
+        detail: (slot.slack_channel || '').trim(),
+        progress: '',
+        nextFire: '',
+      })
+    }
+  }
+  // `owned` is referenced so a future caller change that drops a key from the
+  // membership set is caught by the type checker rather than silently widening.
+  void owned
+  const byTitle = (a: Subscription, b: Subscription) =>
+    (a.sessionTitle || '').localeCompare(b.sessionTitle || '')
+  monitors.sort(byTitle)
+  slack.sort(byTitle)
+  return [...monitors, ...slack]
+}
+
+/** Whether the app can list the project's cron schedules. Always false for an
+ *  installed app: `/api/crons` scopes its GET to the calling app's OWN jobs, so
+ *  a team-projects token never sees a person-owned cron. Kept a function (not a
+ *  bare constant) so the reason has one named, tested home and the UI reads an
+ *  intent, not a magic `false`. */
+export function cronsAvailable(): boolean {
+  return false
 }

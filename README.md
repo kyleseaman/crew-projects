@@ -89,6 +89,41 @@ folder id to scope to, so a project with no folder shows a **Files unavailable**
 note while its pull requests (which come from the sessions themselves) still
 show. A host listing error degrades the same way.
 
+## Subscriptions
+
+Below the goals, each project has a **Subscriptions** panel — what is watching
+on the project's behalf, so a coordinator acts on signals without a prompt
+(Cursor's "Projects" subscriptions are the reference). It shows only watchers
+armed on the project's **own** sessions (the same `projectSessionKeys`
+membership the Library uses), so a watch on a session outside the project never
+appears. Three kinds, by what the app can actually read:
+
+- **Monitors** — the **active** monitor loops (`GET /api/autonudge`) on the
+  project's sessions. That reduced legacy read has no owner gate and no app
+  scope, so every loop is visible; each row shows the cadence (`idle_secs`),
+  progress (`cycle_count`/`max_cycles`) and the next fire (`next_due_ts`). A
+  **stopped** loop is not a subscription — it is watching nothing — so it is
+  excluded.
+- **Channel links** — the sessions the host reports `slack_linked` for, each
+  carrying the `slack_channel` it is bound to, read straight off the slot list
+  the app already fetches.
+- **Schedules** — a cron. `GET /api/crons` scopes its reply to the **calling
+  app's own** jobs (`app_owner_name(created_by) == app`), and this app creates
+  none, so the person's crons are invisible to it. Rather than grant a
+  permission that returns an empty list reading as "no schedules" (a lie), the
+  schedule kind **degrades to an explicit unavailable note** (`cronsAvailable()`
+  is always false) and points the person at the owning session. The app
+  therefore adds **no** new `permissions.api` grant.
+
+Each row opens the owning session (`openChat({ slotKey })`). **Add
+subscription** opens an **unsent draft** in the project's live lead session
+(`openChat` with `autoSend: false`) pre-filled with a prompt the person edits
+and sends — the agent then sets the watch up with its own tools. The app arms
+nothing itself: it creates no cron, loop or channel link. The button is hidden
+when the project has no live lead to draft into. When no watcher is armed, the
+panel shows a calm empty state (the schedules-unavailable note still shows,
+since it is a fact about the app, not about this project).
+
 ## Waiting on you
 
 At the **top of the page**, above the project list, a **Waiting-on-you inbox**
@@ -153,7 +188,11 @@ npm run screenshot   # build the harness and write PNGs to ../screenshots/
   (parsers), a needs-input question and a stalled session (braking) so the
   populated inbox spans two projects and all three kinds; `slotsNoWaitingFixture`
   (the same slots with every waiting flag cleared) backs the `?empty=1` mode for
-  the empty-state capture.
+  the empty-state capture. For **Subscriptions**, the parsers project's sessions
+  carry active monitor loops with a cadence, progress and next fire
+  (`loopsFixture`, which also keeps one **stopped** loop that must NOT appear)
+  and two `slack_linked` sessions with channel names, while the Codex project
+  has a lead but no watcher so it backs the panel's empty state.
 - `vite.dev.config.ts` serves `index.html` → `src/dev/harness.tsx` and aliases
   the two SDK specifiers to the stubs. It writes its build to `dist-dev/`.
 - `scripts/screenshot.mjs` builds the harness, serves it with Vite preview, and
@@ -163,7 +202,10 @@ npm run screenshot   # build the harness and write PNGs to ../screenshots/
   Current captures: `projects-overview`, `projects-overview-narrow`,
   `project-goals` (a project's live + archived goals, each with its rollup),
   `project-single-repo`, `project-set-directory`, `project-library` (a
-  project's artifacts, output files and de-duplicated PRs), `new-project-dialog`,
+  project's artifacts, output files and de-duplicated PRs),
+  `project-subscriptions` (a project's monitor loops, channel links and the
+  schedules-unavailable note), `project-subscriptions-empty` (the panel's calm
+  empty state on a project with no watcher), `new-project-dialog`,
   `waiting-on-you` (the populated inbox — an approval, a needs-input and a
   stalled session across two projects), and `waiting-on-you-empty` (the calm
   empty state, served by the harness's `?empty=1` mode). A view entry may carry
