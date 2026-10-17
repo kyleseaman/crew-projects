@@ -106,6 +106,9 @@ const VIEWS = [
       await page.waitForTimeout(200)
     },
   },
+  // The same overview on the dashboard's light theme, to prove the page reads
+  // only host theme tokens (`?theme=` picks any dashboard theme id).
+  { name: 'projects-overview-light', width: 1280, height: 900, query: '?theme=light' },
 ]
 
 /** Click the project row whose title matches `name`. */

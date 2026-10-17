@@ -14,32 +14,14 @@ import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from '../App'
 
-/** The host provides these theme tokens at runtime; the app reads them via
- *  var(--...). Here we set a dark palette on :root so the standalone harness
- *  matches the installed dark-cockpit look. */
-const THEME_TOKENS: Record<string, string> = {
-  '--bg': '#0f1115',
-  '--bg-hover': '#1a1d23',
-  '--bg-elevated': '#171a20',
-  '--card': '#15181e',
-  '--card-fg': '#e6e8eb',
-  '--text': '#e6e8eb',
-  '--text-strong': '#f5f6f8',
-  '--muted': '#8b929c',
-  '--muted-strong': '#aeb4bd',
-  '--border': '#272b33',
-  '--border-strong': '#3a3f49',
-  '--accent': '#5b8cff',
-  '--accent-fg': '#0b0d11',
-  '--info': '#5b8cff',
-  '--warn': '#e0a53a',
-  '--danger': '#e05a5a',
-  '--ok': '#4bbf7b',
-}
+// The host's real theme tokens (every dashboard theme), so the harness looks
+// exactly like the installed app. Pick one with ?theme=<id>, e.g. ?theme=light,
+// ?theme=nord-dark; the default is the dashboard default (dark).
+import './host-themes.css'
 
 function applyTheme(): void {
   const root = document.documentElement
-  for (const [k, v] of Object.entries(THEME_TOKENS)) root.style.setProperty(k, v)
+  root.dataset.theme = new URLSearchParams(location.search).get('theme') || 'dark'
   document.body.style.margin = '0'
   document.body.style.background = 'var(--bg)'
   document.body.style.color = 'var(--text)'
