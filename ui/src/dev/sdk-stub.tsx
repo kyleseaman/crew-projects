@@ -18,6 +18,7 @@ import {
   sessionsPageFixture,
   sessionDocsPageFixture,
   artifactsForFolder,
+  schedulesForFolder,
   type Folder,
 } from './fixtures'
 import type { Slot } from '../model'
@@ -27,6 +28,13 @@ import type { Slot } from '../model'
 function inboxEmptyMode(): boolean {
   if (typeof window === 'undefined') return false
   return new URLSearchParams(window.location.search).get('empty') === '1'
+}
+
+/** Harness-only flag: `?noschedules=1` makes the schedules route fail like an
+ *  older gateway (404), to screenshot the unavailable note. */
+function noSchedulesMode(): boolean {
+  if (typeof window === 'undefined') return false
+  return new URLSearchParams(window.location.search).get('noschedules') === '1'
 }
 
 export interface AppApi {
@@ -59,7 +67,13 @@ function queryParam(path: string, key: string): string {
 }
 
 function resolve<T>(path: string): T {
-  switch (route(path)) {
+  const r = route(path)
+  if (r.startsWith('/api/project-schedules/')) {
+    if (noSchedulesMode()) throw Object.assign(new Error('HTTP 404'), { status: 404 })
+    const folderId = decodeURIComponent(r.slice('/api/project-schedules/'.length))
+    return { schedules: schedulesForFolder(folderId), folder_id: folderId, server_tz: 'America/New_York' } as unknown as T
+  }
+  switch (r) {
     case '/api/chat/slots':
       return (inboxEmptyMode() ? slotsNoWaitingFixture : slotsFixture) as unknown as T
     case '/api/autonudge':

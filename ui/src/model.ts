@@ -864,11 +864,55 @@ export function buildSubscriptions(
   return [...monitors, ...slack]
 }
 
-/** Whether the app can list the project's cron schedules. Always false for an
- *  installed app: `/api/crons` scopes its GET to the calling app's OWN jobs, so
- *  a team-projects token never sees a person-owned cron. Kept a function (not a
- *  bare constant) so the reason has one named, tested home and the UI reads an
- *  intent, not a magic `false`. */
-export function cronsAvailable(): boolean {
-  return false
+/** One row of `GET /api/project-schedules/{folder_id}` (Kiro Crew core). A
+ *  REDUCED cron record: the route never returns a job's message, script,
+ *  command, env or result text, so nothing here can carry a prompt or secret. */
+export interface ProjectSchedule {
+  id: string
+  name: string
+  schedule: string
+  cron_expr: string | null
+  every_secs: number | null
+  timezone: string | null
+  enabled: boolean
+  user_paused: boolean
+  /** Epoch seconds of the next fire, or null when none is due. */
+  next_run: number | null
+  last_status: string | null
+  session_key: string | null
+}
+
+export interface ProjectSchedulesPage {
+  schedules: ProjectSchedule[]
+  folder_id: string
+  server_tz: string | null
+}
+
+/** What the Schedules group can say. `unavailable` covers a gateway that
+ *  predates the route (404) or an install that did not grant it (403): the
+ *  panel then keeps its honest "can't be listed here" note, never an empty list
+ *  that would read as "no schedules". */
+export type SchedulesState =
+  | { kind: 'loading' }
+  | { kind: 'unavailable' }
+  | { kind: 'ready'; schedules: ProjectSchedule[] }
+
+export function schedulesState(
+  data: unknown,
+  error: unknown,
+  loading: boolean,
+): SchedulesState {
+  if (error) return { kind: 'unavailable' }
+  if (loading) return { kind: 'loading' }
+  const rows = (data as ProjectSchedulesPage | undefined)?.schedules
+  if (!Array.isArray(rows)) return { kind: 'unavailable' }
+  // Paused (by the person or by repeated failures) sinks below running ones;
+  // then soonest first.
+  const sorted = [...rows].sort((a, b) => {
+    const pa = a.enabled ? 0 : 1
+    const pb = b.enabled ? 0 : 1
+    if (pa !== pb) return pa - pb
+    return (a.next_run ?? Infinity) - (b.next_run ?? Infinity)
+  })
+  return { kind: 'ready', schedules: sorted }
 }

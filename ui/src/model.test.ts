@@ -6,7 +6,7 @@ import {
   buildProjects,
   buildSubscriptions,
   cadenceText,
-  cronsAvailable,
+  schedulesState,
   dedupeProjectPrs,
   folderRepos,
   loopText,
@@ -437,9 +437,27 @@ describe('cadenceText', () => {
   })
 })
 
-describe('cronsAvailable', () => {
-  it('is false: the app cannot list the person\'s crons (api/crons is app-scoped)', () => {
-    expect(cronsAvailable()).toBe(false)
+describe('schedulesState', () => {
+  const row = (id: string, enabled: boolean, next_run: number | null) => ({
+    id, name: id, schedule: 'every hour', cron_expr: null, every_secs: 3600, timezone: null,
+    enabled, user_paused: !enabled, next_run, last_status: null, session_key: 'chat-1',
+  })
+  it('is unavailable when the route errors (old gateway 404, ungranted 403)', () => {
+    expect(schedulesState(undefined, new Error('404'), false)).toEqual({ kind: 'unavailable' })
+  })
+  it('is unavailable on a malformed body rather than claiming no schedules', () => {
+    expect(schedulesState({ nope: 1 }, null, false)).toEqual({ kind: 'unavailable' })
+  })
+  it('is loading before the first answer', () => {
+    expect(schedulesState(undefined, null, true)).toEqual({ kind: 'loading' })
+  })
+  it('sorts running jobs soonest first and paused ones last', () => {
+    const st = schedulesState(
+      { schedules: [row('p', false, 10), row('late', true, 300), row('soon', true, 100), row('none', true, null)] },
+      null,
+      false,
+    )
+    expect(st.kind === 'ready' && st.schedules.map(s => s.id)).toEqual(['soon', 'late', 'none', 'p'])
   })
 })
 

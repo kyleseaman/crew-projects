@@ -138,6 +138,21 @@ const VIEWS = [
       await page.waitForTimeout(200)
     },
   },
+  // Subscriptions on a gateway WITHOUT the schedules route: the honest
+  // unavailable note instead of an empty list.
+  {
+    name: 'project-subscriptions-no-schedules',
+    width: 1280,
+    height: 1200,
+    query: '?noschedules=1',
+    prepare: async page => {
+      await clickProjectByName(page, 'Verify telemetry parsers')
+      const subs = page.locator('.tp-subs').first()
+      await subs.waitFor({ timeout: 10_000 })
+      await subs.scrollIntoViewIfNeeded()
+      await page.waitForTimeout(250)
+    },
+  },
   // The same overview on the dashboard's light theme, to prove the page reads
   // only host theme tokens (`?theme=` picks any dashboard theme id).
   { name: 'projects-overview-light', width: 1280, height: 900, query: '?theme=light' },

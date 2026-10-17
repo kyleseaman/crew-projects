@@ -31,7 +31,10 @@ import {
   buildFolderProjects,
   buildInbox,
   buildSubscriptions,
-  cronsAvailable,
+  schedulesState,
+  type ProjectSchedule,
+  type ProjectSchedulesPage,
+  type SchedulesState,
   dedupeProjectPrs,
   loopText,
   projectArtifacts,
@@ -423,21 +426,53 @@ function SubscriptionRow({ sub, onOpen }: { sub: Subscription; onOpen: (key: str
  *  lead session — the agent sets the watch up with its own tools; the app
  *  creates no cron, loop or link itself. When nothing is watching and no lead
  *  exists to draft into, the panel shows a calm empty state. */
+/** One cron schedule on a project session. Opens the owning session, where
+ *  the person (or its agent) manages the job; the app never edits crons. */
+function ScheduleRow({ job, onOpen }: { job: ProjectSchedule; onOpen: (key: string) => void }) {
+  const paused = !job.enabled
+  const owner = job.session_key ?? ''
+  const meta = [
+    job.schedule,
+    job.next_run && !paused ? t.subScheduleNext(fmtRelative(job.next_run * 1000)) : '',
+    job.last_status ? t.subScheduleLast(job.last_status) : '',
+  ].filter(Boolean).join(' · ')
+  const body = (
+    <>
+      <CalendarClock size={14} className="tp-sub-ico" aria-hidden="true" />
+      <div className="tp-sub-main">
+        <span className="tp-sub-name">{job.name}</span>
+        <span className="tp-muted tp-ellipsis">{meta}</span>
+      </div>
+      {paused && <Badge variant="muted">{t.subSchedulePaused}</Badge>}
+    </>
+  )
+  // A job whose owning session is gone still lists, but has nothing to open.
+  return owner ? (
+    <Clickable className="tp-subs-row" onClick={() => onOpen(owner)} aria-label={`${t.open}: ${job.name}`}>
+      {body}
+    </Clickable>
+  ) : (
+    <div className="tp-subs-row tp-subs-row-static" role="listitem">{body}</div>
+  )
+}
+
 function SubscriptionsSection({
   subs,
+  schedules,
   canAdd,
   onOpen,
   onAdd,
 }: {
   subs: Subscription[]
+  schedules: SchedulesState
   canAdd: boolean
   onOpen: (key: string) => void
   onAdd: () => void
 }) {
   const monitors = subs.filter(s => s.kind === 'monitor')
   const slack = subs.filter(s => s.kind === 'slack')
-  const schedulesAvailable = cronsAvailable()
-  const nothing = subs.length === 0
+  const scheduleRows = schedules.kind === 'ready' ? schedules.schedules : []
+  const nothing = subs.length === 0 && scheduleRows.length === 0
 
   return (
     <section className="tp-subs" aria-label={t.subscriptions}>
@@ -488,16 +523,28 @@ function SubscriptionsSection({
         </>
       )}
 
-      {/* Schedules: the app cannot read the person's crons, so this is always an
-          honest unavailable note rather than a faked or empty "no schedules". */}
+      {/* Schedules come from core's reduced, read-only /api/project-schedules
+          route. On a gateway without it (or without the grant) the group keeps
+          an honest unavailable note rather than an empty "no schedules". */}
       <div className="tp-subs-group">
         <div className="tp-subs-grouphead">
           <CalendarClock size={12} aria-hidden="true" /> {t.subSchedules}
+          {schedules.kind === 'ready' && (
+            <span className="tp-muted">{t.subSchedulesCount(scheduleRows.length)}</span>
+          )}
         </div>
-        {schedulesAvailable ? null : (
+        {schedules.kind === 'unavailable' && (
           <div className="tp-subs-unavail" role="note">
             <strong className="tp-subs-unavail-title">{t.subSchedulesUnavailable}</strong>
             <p className="tp-muted">{t.subSchedulesUnavailableBody}</p>
+          </div>
+        )}
+        {schedules.kind === 'ready' && scheduleRows.length === 0 && !nothing && (
+          <p className="tp-muted tp-subs-none">{t.subSchedulesNone}</p>
+        )}
+        {scheduleRows.length > 0 && (
+          <div className="tp-subs-list" role="list">
+            {scheduleRows.map(j => <ScheduleRow key={j.id} job={j} onOpen={onOpen} />)}
           </div>
         )}
       </div>
@@ -513,6 +560,7 @@ function ProjectPage({
   loops,
   library,
   subscriptions,
+  schedules,
   onOpen,
   onOpenArtifact,
   onNewGoal,
@@ -523,6 +571,7 @@ function ProjectPage({
   loops: Loop[]
   library: LibraryData
   subscriptions: Subscription[]
+  schedules: SchedulesState
   onOpen: (key: string) => void
   onOpenArtifact: (slug: string) => void
   onNewGoal: (p: FolderProject) => void
@@ -622,6 +671,7 @@ function ProjectPage({
 
       <SubscriptionsSection
         subs={subscriptions}
+        schedules={schedules}
         // Add-subscription drafts into the project's lead session, so it needs a
         // live lead to open. A project with only archived goals (no live lead)
         // has no session to seed the draft into, so the button is hidden there.
@@ -985,6 +1035,23 @@ export default function TeamProjects() {
     [current, slotsByKey, loops],
   )
 
+  // Cron schedules for the CURRENT project from core's reduced, read-only
+  // /api/project-schedules/{folder_id}. A gateway without the route (404) or an
+  // install without the grant (403) errors, which schedulesState maps to the
+  // honest unavailable note. No retry: an absent route will not appear.
+  const schedulesQ = useQuery({
+    queryKey: ['team-projects', 'schedules', currentFolderId],
+    queryFn: () =>
+      api.get<ProjectSchedulesPage>(`/api/project-schedules/${encodeURIComponent(currentFolderId)}`),
+    enabled: visible && currentFolderId !== '',
+    refetchInterval: visible ? POLL_MS * 6 : false,
+    retry: false,
+  })
+  const schedules = useMemo(
+    () => schedulesState(schedulesQ.data, schedulesQ.error, schedulesQ.isLoading),
+    [schedulesQ.data, schedulesQ.error, schedulesQ.isLoading],
+  )
+
   const openSession = (slotKey: string) => openChat({ slotKey })
   // Open an artifact at the host's read-only detail page (/artifacts/<slug>).
   // The app only LINKS to it — it never materializes, mutates or re-files it,
@@ -1090,6 +1157,7 @@ export default function TeamProjects() {
                   loops={loops}
                   library={library}
                   subscriptions={subscriptions}
+                  schedules={schedules}
                   onOpen={openSession}
                   onOpenArtifact={openArtifact}
                   onNewGoal={openNewGoal}

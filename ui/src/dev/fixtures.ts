@@ -516,3 +516,23 @@ export const foldersFixture: Folder[] = [
     history_count: 0,
   },
 ]
+
+// ── Project schedules (GET /api/project-schedules/{folder_id}) ──────────────
+// The REDUCED shape core returns: no message, script, env or result text.
+const inSecs = (s: number) => Math.floor(Date.now() / 1000) + s
+const schedulesByFolder: Record<string, unknown[]> = {
+  'f-parsers': [
+    { id: 'cr-nightly', name: 'Nightly parser regression run', schedule: 'every day at 02:00', cron_expr: '0 2 * * *', every_secs: null, timezone: 'America/New_York', enabled: true, user_paused: false, next_run: inSecs(6 * 3600), last_status: 'ok', session_key: 'L-parsers' },
+    { id: 'cr-pr-follow', name: 'Follow open parser PRs', schedule: 'every 30 minutes', cron_expr: null, every_secs: 1800, timezone: null, enabled: true, user_paused: false, next_run: inSecs(12 * 60), last_status: 'ok', session_key: 'C-ref' },
+    { id: 'cr-weekly', name: 'Weekly fixture refresh', schedule: 'Mondays at 09:00', cron_expr: '0 9 * * 1', every_secs: null, timezone: 'America/New_York', enabled: false, user_paused: true, next_run: null, last_status: 'error', session_key: 'L-parsers' },
+  ],
+  'f-braking': [
+    { id: 'cr-bugs', name: 'Triage #trackout-bugs each weekday', schedule: 'weekdays at 09:00', cron_expr: '0 9 * * 1-5', every_secs: null, timezone: 'America/New_York', enabled: true, user_paused: false, next_run: inSecs(15 * 3600), last_status: null, session_key: 'L-braking' },
+  ],
+}
+
+/** Rows for one folder, including its nested children like the real route. */
+export function schedulesForFolder(folderId: string): unknown[] {
+  const kids = folderId === 'f-parsers' ? ['f-parsers-ref'] : []
+  return [folderId, ...kids].flatMap(id => schedulesByFolder[id] ?? [])
+}

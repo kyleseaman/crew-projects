@@ -174,7 +174,10 @@ a.tp-chip:hover{border-color:var(--border-strong,var(--border));color:var(--text
 .tp-subs-list{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:8px;overflow:hidden}
 .tp-subs-row{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);min-width:0;cursor:pointer}
 .tp-subs-list > :last-child{border-bottom:none}
+.tp-subs-row-static{cursor:default}
+.tp-subs-none{margin:0;font-size:12px}
 .tp-subs-row:hover{background:var(--bg-hover)}
+.tp-subs-row-static:hover{background:none}
 .tp-subs-row:focus-visible{outline:2px solid var(--ring,var(--accent));outline-offset:-2px}
 .tp-sub-ico{flex:none;color:var(--muted)}
 .tp-sub-main{min-width:0;display:flex;flex-direction:column;gap:1px;flex:1}

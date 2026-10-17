@@ -168,9 +168,14 @@ export const t = {
   subSlackMeta: (channel: string) => (channel ? `Linked to ${channel}` : 'Linked to a channel'),
   /** The honest UNAVAILABLE state for schedules: the app cannot read the
    *  person's crons, so it says so rather than render an empty "no schedules". */
+  subSchedulesCount: (n: number) => (n === 1 ? '1 schedule' : `${n} schedules`),
+  subSchedulesNone: 'No schedules on this project’s sessions.',
+  subSchedulePaused: 'Paused',
+  subScheduleNext: (when: string) => `next ${when}`,
+  subScheduleLast: (status: string) => `last run ${status}`,
   subSchedulesUnavailable: 'Schedules can’t be listed here',
   subSchedulesUnavailableBody:
-    'Cron schedules are owned per session and aren’t readable from this app, so they can’t be shown. Open a session to see and manage its schedules.',
+    'This Kiro Crew version doesn’t offer project schedules to apps. Open a session to see and manage its schedules.',
   /** The accessible label for a subscription row's open action. */
   subscriptionOpen: (session: string) => `Open ${session}`,
 }
