@@ -1,4 +1,4 @@
-# Projects (team-projects)
+# Projects (project-hub)
 
 A Kiro Crew app page where **a project is a sidebar folder**. The list is
 sourced from `GET /api/chat/folders`: every top-level folder is a project, shown
@@ -216,8 +216,8 @@ entry `src/App.tsx`) and never imports anything under `src/dev/`, so the shipped
 `dist/index.mjs` stays free of the stubs, fixtures and harness.
 
 Then dashboard → App Store → install from local path
-`/Users/kyle/Development/team-projects`, and enable it. (`kirocrew app install`
+`/Users/kyle/Development/project-hub`, and enable it. (`kirocrew app install`
 also works from a terminal the gateway recognises as its owner.)
 
 The name `projects` is taken by the built-in Task Runner app, hence
-`team-projects`; the sidebar label is "Projects".
+`project-hub`; the sidebar label is "Projects".

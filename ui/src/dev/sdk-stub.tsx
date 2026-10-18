@@ -171,7 +171,7 @@ export interface AppInfo {
 
 export function useAppInfo(): AppInfo {
   return {
-    name: 'team-projects',
+    name: 'project-hub',
     version: '0.1.0',
     permissions: { api: ['/api/chat/slots', '/api/chat/folders', '/api/autonudge', '/api/sessions', '/api/artifacts'], events: ['slots'] },
     active: true,

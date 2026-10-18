@@ -736,7 +736,7 @@ export function buildInbox(projects: FolderProject[]): InboxItem[] {
  *              `slack_channel` it is bound to. From the slot list the app
  *              already reads.
  *   schedule — a cron. The `/api/crons` GET is scoped to the CALLING APP's own
- *              jobs (`app_owner_name(created_by) == app`), so a team-projects
+ *              jobs (`app_owner_name(created_by) == app`), so a project-hub
  *              token sees only crons IT created — and it creates none. The
  *              person's crons are therefore invisible to the app. Rather than
  *              grant a permission that returns an empty list and read as "no

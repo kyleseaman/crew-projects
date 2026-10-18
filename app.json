@@ -1,6 +1,6 @@
 {
-  "name": "team-projects",
-  "version": "0.3.0",
+  "name": "project-hub",
+  "version": "0.4.0",
   "displayName": "Projects",
   "description": "Projects as folders: repositories, default agent and instructions, every team-lead goal with its team, a Library, subscriptions, and what is waiting on you.",
   "author": "kyle",
@@ -14,7 +14,7 @@
     "entry": "dist/index.mjs",
     "pages": [
       {
-        "route": "/apps/team-projects",
+        "route": "/apps/project-hub",
         "label": "Projects",
         "icon": "FolderKanban"
       }

@@ -873,7 +873,7 @@ function InboxBar({ items, onOpen }: { items: InboxItem[]; onOpen: (key: string)
   )
 }
 
-export default function TeamProjects() {
+export default function ProjectHub() {
   const api = useAppApi()
   const qc = useQueryClient()
   const { active } = useAppInfo()
@@ -886,17 +886,17 @@ export default function TeamProjects() {
   const visible = active !== false
 
   const foldersQ = useQuery({
-    queryKey: ['team-projects', 'folders'],
+    queryKey: ['project-hub', 'folders'],
     queryFn: () => api.get<Folder[]>('/api/chat/folders'),
     refetchInterval: visible ? POLL_MS : false,
   })
   const slotsQ = useQuery({
-    queryKey: ['team-projects', 'slots'],
+    queryKey: ['project-hub', 'slots'],
     queryFn: () => api.get<Slot[]>('/api/chat/slots'),
     refetchInterval: visible ? POLL_MS : false,
   })
   const loopsQ = useQuery({
-    queryKey: ['team-projects', 'loops'],
+    queryKey: ['project-hub', 'loops'],
     queryFn: () => api.get<{ enabled: boolean; loops: Loop[] }>('/api/autonudge'),
     refetchInterval: visible ? POLL_MS : false,
   })
@@ -907,7 +907,7 @@ export default function TeamProjects() {
   // read-only overview). Polled slower than the live surfaces: history changes
   // only when a session is archived or deleted, not every turn.
   const sessionsQ = useQuery({
-    queryKey: ['team-projects', 'sessions'],
+    queryKey: ['project-hub', 'sessions'],
     queryFn: () => api.get<SessionsPage>('/api/sessions?limit=200'),
     refetchInterval: visible ? POLL_MS * 4 : false,
   })
@@ -918,7 +918,7 @@ export default function TeamProjects() {
   // Polled on the slow cadence: a document file changes only when an agent
   // writes one, not every turn.
   const docsQ = useQuery({
-    queryKey: ['team-projects', 'session-docs'],
+    queryKey: ['project-hub', 'session-docs'],
     queryFn: () => api.get<{ docs: SessionDoc[] }>('/api/artifacts/session-docs'),
     refetchInterval: visible ? POLL_MS * 4 : false,
   })
@@ -946,7 +946,7 @@ export default function TeamProjects() {
       setCreating(false)
       setCreateError('')
       if (created?.id) setSelected(created.id)
-      void qc.invalidateQueries({ queryKey: ['team-projects', 'folders'] })
+      void qc.invalidateQueries({ queryKey: ['project-hub', 'folders'] })
     },
     onError: (e: unknown) => {
       setCreateError(String((e as Error)?.message || e) || t.createProjectError)
@@ -989,7 +989,7 @@ export default function TeamProjects() {
   // unavailable path is a defensive empty id.
   const currentFolderId = current?.folder.id ?? ''
   const artifactsQ = useQuery({
-    queryKey: ['team-projects', 'artifacts', currentFolderId],
+    queryKey: ['project-hub', 'artifacts', currentFolderId],
     queryFn: () =>
       api.get<ArtifactsPage>(`/api/artifacts?chat_folder=${encodeURIComponent(currentFolderId)}`),
     enabled: visible && currentFolderId !== '',
@@ -1040,7 +1040,7 @@ export default function TeamProjects() {
   // install without the grant (403) errors, which schedulesState maps to the
   // honest unavailable note. No retry: an absent route will not appear.
   const schedulesQ = useQuery({
-    queryKey: ['team-projects', 'schedules', currentFolderId],
+    queryKey: ['project-hub', 'schedules', currentFolderId],
     queryFn: () =>
       api.get<ProjectSchedulesPage>(`/api/project-schedules/${encodeURIComponent(currentFolderId)}`),
     enabled: visible && currentFolderId !== '',
@@ -1073,7 +1073,7 @@ export default function TeamProjects() {
         folder_id: p.folder.id,
       }),
     onSuccess: (slot, p) => {
-      void qc.invalidateQueries({ queryKey: ['team-projects', 'slots'] })
+      void qc.invalidateQueries({ queryKey: ['project-hub', 'slots'] })
       // Land the person in the freshly-created, still-empty session. autoSend
       // is irrelevant with no message — the draft is the empty composer.
       openChat({ slotKey: slot?.key, agent: p.defaultAgent || TEAM_LEAD_AGENT, autoSend: false })
