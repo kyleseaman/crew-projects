@@ -3,7 +3,7 @@
 # blocks, so the dev harness renders with the real app themes.
 # Usage: scripts/sync-themes.sh [/path/to/KiroCrew] [git-ref]
 set -eu
-repo=${1:-/Users/kyle/Development/KiroCrew}
+repo=${1:-${KIROCREW_REPO:?pass the KiroCrew checkout path, or set KIROCREW_REPO}}
 ref=${2:-origin/main}
 here=$(cd "$(dirname "$0")/.." && pwd)
 css=$(git -C "$repo" show "$ref:website/src/index.css")

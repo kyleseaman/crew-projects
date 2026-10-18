@@ -235,8 +235,8 @@ The harness is dev-only. `npm run build` uses `vite.config.ts` (library mode,
 entry `src/App.tsx`) and never imports anything under `src/dev/`, so the shipped
 `dist/index.mjs` stays free of the stubs, fixtures and harness.
 
-Then dashboard → App Store → install from local path
-`/Users/kyle/Development/project-hub`, and enable it. (`kirocrew app install`
+Then dashboard → App Store → install from local path (the absolute path of
+this folder), and enable it. (`kirocrew app install`
 also works from a terminal the gateway recognises as its owner.)
 
 The name `projects` is taken by the built-in Task Runner app, hence
