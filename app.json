@@ -1,6 +1,7 @@
 {
   "name": "project-hub",
-  "version": "0.4.1",
+  "version": "0.4.2",
+  "minKiroCrewVersion": "0.10.0",
   "displayName": "Projects",
   "description": "Projects as folders: repositories, default agent and instructions, every team-lead goal with its team, a Library, subscriptions, and what is waiting on you.",
   "author": "kyle",

@@ -1,4 +1,7 @@
 node_modules/
-ui/dist/
+# ui/dist/ is committed on purpose: the gateway installs straight from this
+# directory and serves ui/dist/index.mjs, so a clone or copy must work without
+# a Node toolchain. scripts/package.sh refuses to package a stale bundle.
 ui/dist-dev/
+release/
 .DS_Store

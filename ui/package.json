@@ -7,7 +7,8 @@
     "dev:build": "vite build --config vite.dev.config.ts",
     "build": "vite build",
     "test": "vitest run",
-    "screenshot": "node scripts/screenshot.mjs"
+    "screenshot": "node scripts/screenshot.mjs",
+    "package": "sh ../scripts/package.sh"
   },
   "devDependencies": {
     "@playwright/test": "1.58.2",

@@ -153,6 +153,26 @@ only the height it needs, so an empty inbox does not push the project list down.
 cd ui && npm install && npm test && npm run build
 ```
 
+The built `ui/dist/index.mjs` is committed, so a copy or clone of this folder
+installs without Node. Requires Kiro Crew 0.10.0 or newer (`minKiroCrewVersion`
+in `app.json`); an older gateway refuses the install instead of loading a page
+that fails.
+
+## Install on another gateway
+
+`npm run package` (from `ui/`) rebuilds, tests, refuses a stale committed
+bundle, and writes `release/project-hub-<version>.tar.gz` with just the runtime
+files. On the other machine:
+
+```bash
+tar -xzf project-hub-<version>.tar.gz
+kirocrew app install "$PWD/project-hub"
+```
+
+Then enable it in the dashboard (App Store → Projects → Enable → "Trust this
+app and enable"). Trust is per gateway. To update an existing install, use the
+App Store's Update action, or `kirocrew app uninstall project-hub` first.
+
 ## Dev harness and screenshots
 
 The app's UI is normally supplied with host data (`/api/chat/slots`,
