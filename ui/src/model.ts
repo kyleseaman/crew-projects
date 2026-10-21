@@ -1,14 +1,36 @@
 /**
  * Pure grouping logic: turns the flat session list into projects.
  *
- * A project is a root `kirocrew-team-lead` session. Everything it created
- * (directly or transitively, via `created_by`) belongs to it. The tree is
- * flattened to at most two levels: a direct child that created sessions of
- * its own becomes a sub-team (its lead plus all its descendants as workers);
- * a direct child with no children is a worker of the project itself.
+ * A goal is a root LEAD session: a `kirocrew-team-lead` or any conductor agent
+ * (`kirocrew-conductor`, `kirocrew-ledger-conductor`, `crew-manager-conductor`,
+ * ...) with no lead above it. Everything it created (directly or transitively,
+ * via the slot's `parent` lineage edge, falling back to `created_by`) belongs
+ * to it. The rollup is flattened to two levels: a direct child that is itself a
+ * lead, or that created sessions of its own, becomes a sub-team (its lead plus
+ * all its descendants as workers); any other direct child is a worker of the
+ * goal itself. The sessions TREE (`Project.tree`) keeps the full depth, so a
+ * sub-conductor two levels down still reads as nested under its own parent.
  */
 
 export const TEAM_LEAD_AGENT = 'kirocrew-team-lead'
+
+/** True for an agent that leads a team: the team lead, or any conductor
+ *  (an agent id ending in `conductor`, e.g. `kirocrew-conductor`,
+ *  `kirocrew-pipeline-conductor`, `crew-manager-conductor`). Workers, default
+ *  chats and every other agent are not leads. */
+export function isLeadAgent(agent: string | undefined): boolean {
+  const a = (agent || '').trim()
+  return a === TEAM_LEAD_AGENT || /(^|[-_])conductor$/.test(a)
+}
+
+/** The name the embedded chat's placeholder addresses: the session's own
+ *  agent from its slot row (`agent`, which for a crewmate chat is the
+ *  crewmate's name). The slot rows the app reads carry no separate display
+ *  name, so there is nothing better to prefer. '' when the row names none, so
+ *  the caller passes no placeholder and the host's default shows. */
+export function chatAgentName(slot: Pick<Slot, 'agent'> | null | undefined): string {
+  return (slot?.agent || '').trim()
+}
 
 export interface SourceLink {
   url: string
@@ -24,10 +46,29 @@ export interface Slot {
   title?: string
   agent?: string
   created_by?: string
+  /** The lineage edge the host attaches to every slot row (`_attach_slot_parents`):
+   *  `key` is the creator's row key IN THIS PAYLOAD, already resolved to the
+   *  nearest LIVE ancestor when the creator itself closed (`ancestor: true`),
+   *  null when nobody running opened it. The chat sidebar nests on this; the
+   *  app does too, falling back to `created_by` when it is null or absent (a
+   *  frame sent before the host's lineage projection is seeded). */
+  parent?: { slot?: string; key?: string | null; ancestor?: boolean } | null
   running?: boolean
   pending_approval?: boolean
   needs_input?: boolean
   interrupted?: boolean
+  /** The host's `waiting_for_input`: the turn is over and the session's last
+   *  conversational message is the ASSISTANT's (no approval or options
+   *  pending). The only signal the slot row gives that `last_message` is the
+   *  agent's own words rather than the person's prompt. */
+  waiting_for_input?: boolean
+  /** An assistant message offering options is the latest turn; its text,
+   *  options stripped, is `prompt_preview`. */
+  has_options?: boolean
+  prompt_preview?: string
+  /** What a pending tool approval asks for (`slot_projection`); display only.
+   *  `tool_kind` is the ACP kind (execute, edit, read, fetch, ...) or `spawn`. */
+  pending_approval_info?: { tool?: string; tool_kind?: string; tool_purpose?: string } | null
   last_ts?: string
   last_activity_ts?: string
   last_message?: string
@@ -43,6 +84,12 @@ export interface Slot {
   /** The visible Slack channel the session is linked to, when `slack_linked`.
    *  Display only — a redacted channel name/id the host already computed. */
   slack_channel?: string
+  /** The session's approval posture, from the same slot row the dashboard's
+   *  ApprovalModePicker reads (`slotApprovalMode`): the person's Trust flag, a
+   *  live app-armed scoped grant (blank once it lapses), and Reads. */
+  trust?: boolean
+  trust_scope?: string
+  trust_reads?: boolean
 }
 
 export interface Loop {
@@ -82,7 +129,18 @@ export interface Project {
   /** Every session in the project except the lead. */
   memberCount: number
   activeCount: number
-  status: Status
+  /** The LEAD's own status: its slot flags, with an idle lead whose loop is
+   *  active reading as working (it is between patrol cycles). This is what
+   *  every display labelled as the lead or the goal shows — never the rollup,
+   *  so one interrupted worker deep in the tree cannot paint the lead red. */
+  leadStatus: Status
+  /** Worst status over the lead AND every session under it. Only for genuine
+   *  rollups: ordering goals, the project's list dot, counts. */
+  rollupStatus: Status
+  /** The sessions UNDER the lead (never the lead itself) that need the person
+   *  or are stalled, named, so a display can show them beside the lead's own
+   *  status instead of folding them into it. */
+  subAttention: SubAttention
   prs: SourceLink[]
   repo: string
   updated: string
@@ -91,6 +149,44 @@ export interface Project {
    *  dimmed, openable goal rather than a running team. A live goal built from
    *  the slot list is false. */
   archived: boolean
+  /** Every session under the lead at its real depth (a sub-conductor's own
+   *  sessions nested under it). Absent on a goal built without one; then
+   *  `sessionTree` falls back to the two-level rollup. */
+  tree?: SessionNode[]
+}
+
+/** Sessions under a goal's lead that want the person, by kind, each list most
+ *  recent first. `needsYou` is a pending approval or a question; `stalled` an
+ *  interrupted turn awaiting a resume. */
+export interface SubAttention {
+  needsYou: Member[]
+  stalled: Member[]
+}
+
+export const NO_SUB_ATTENTION: SubAttention = { needsYou: [], stalled: [] }
+
+/** Collect the needs-you / stalled sessions among `members` (the lead's
+ *  descendants), de-duplicated by key, most recent first. */
+export function subAttentionOf(members: Member[]): SubAttention {
+  const seen = new Set<string>()
+  const out: SubAttention = { needsYou: [], stalled: [] }
+  for (const m of members) {
+    if (!m.slot.key || seen.has(m.slot.key)) continue
+    seen.add(m.slot.key)
+    if (m.status === 'needs_you') out.needsYou.push(m)
+    else if (m.status === 'stalled') out.stalled.push(m)
+  }
+  const recent = (a: Member, b: Member) => updatedAt(b.slot).localeCompare(updatedAt(a.slot))
+  out.needsYou.sort(recent)
+  out.stalled.sort(recent)
+  return out
+}
+
+/** A lead's own status: its slot, with an idle lead on an active loop reading
+ *  as working. */
+export function leadStatusOf(lead: Slot, loop: Loop | null): Status {
+  const own = slotStatus(lead)
+  return own === 'idle' && loop?.active ? 'working' : own
 }
 
 export function slotStatus(s: Slot): Status {
@@ -122,18 +218,32 @@ export function loopFor(slotKey: string, loops: Loop[]): Loop | null {
   return mine.find(l => l.active) ?? mine[mine.length - 1] ?? null
 }
 
+/** The key of the row `s` nests under in `byKey`, or null for a root. The
+ *  host's lineage edge (`parent.key`) wins, since it already resolved a closed
+ *  creator to its nearest live ancestor; `created_by` covers a frame without it.
+ *  A self-edge or a key naming no row in the payload is no edge. */
+export function parentKeyOf(s: Slot, byKey: Map<string, Slot>): string | null {
+  const viaLineage = (s.parent?.key || '').trim()
+  if (viaLineage && viaLineage !== s.key && byKey.has(viaLineage)) return viaLineage
+  const viaCreator = (s.created_by || '').trim()
+  if (viaCreator && viaCreator !== s.key && byKey.has(viaCreator)) return viaCreator
+  return null
+}
+
 export function buildProjects(slots: Slot[], loops: Loop[]): Project[] {
   const byKey = new Map(slots.map(s => [s.key, s]))
+  const parentOf = new Map<string, string>()
   const children = new Map<string, Slot[]>()
   for (const s of slots) {
-    const parent = s.created_by
-    if (!parent || parent === s.key || !byKey.has(parent)) continue
+    const parent = parentKeyOf(s, byKey)
+    if (!parent) continue
+    parentOf.set(s.key, parent)
     const list = children.get(parent) ?? []
     list.push(s)
     children.set(parent, list)
   }
 
-  // Descendants with a visited set, so a corrupt created_by cycle cannot hang.
+  // Descendants with a visited set, so a corrupt lineage cycle cannot hang.
   const descendants = (key: string, seen: Set<string>): Slot[] => {
     const out: Slot[] = []
     for (const c of children.get(key) ?? []) {
@@ -144,11 +254,38 @@ export function buildProjects(slots: Slot[], loops: Loop[]): Project[] {
     return out
   }
 
-  const isRootLead = (s: Slot) =>
-    s.agent === TEAM_LEAD_AGENT && !(s.created_by && byKey.has(s.created_by) && s.created_by !== s.key)
+  // A lead is a goal unless another LEAD sits above it: a conductor a team lead
+  // dispatched nests in that lead's tree, while a conductor opened from a plain
+  // chat (a non-lead parent) is still a goal of its own rather than vanishing.
+  const hasLeadAncestor = (s: Slot): boolean => {
+    const seen = new Set([s.key])
+    let cursor = parentOf.get(s.key)
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor)
+      if (isLeadAgent(byKey.get(cursor)?.agent)) return true
+      cursor = parentOf.get(cursor)
+    }
+    return false
+  }
+  const isRootLead = (s: Slot) => isLeadAgent(s.agent) && !hasLeadAncestor(s)
 
   const byRecent = (a: Member, b: Member) => updatedAt(b.slot).localeCompare(updatedAt(a.slot))
   const member = (s: Slot): Member => ({ slot: s, status: slotStatus(s) })
+
+  // The full-depth sessions tree under `key`: leads and sessions with their own
+  // children first (as sub-leads), then plain workers, each most recent first.
+  const treeUnder = (key: string, seen: Set<string>): SessionNode[] => {
+    const nodes: SessionNode[] = []
+    for (const c of children.get(key) ?? []) {
+      if (seen.has(c.key)) continue
+      seen.add(c.key)
+      const below = treeUnder(c.key, seen)
+      const role = isLeadAgent(c.agent) || below.length > 0 ? 'sub-lead' : 'worker'
+      nodes.push({ member: member(c), role, children: below })
+    }
+    const rank = (n: SessionNode) => (n.role === 'sub-lead' ? 1 : 0)
+    return nodes.sort((a, b) => rank(b) - rank(a) || byRecent(a.member, b.member))
+  }
 
   const projects: Project[] = []
   for (const lead of slots.filter(isRootLead)) {
@@ -159,16 +296,18 @@ export function buildProjects(slots: Slot[], loops: Loop[]): Project[] {
       if (seen.has(child.key)) continue
       seen.add(child.key)
       const below = descendants(child.key, seen)
-      if (below.length) subTeams.push({ lead: member(child), workers: below.map(member).sort(byRecent) })
-      else workers.push(member(child))
+      if (below.length || isLeadAgent(child.agent)) {
+        subTeams.push({ lead: member(child), workers: below.map(member).sort(byRecent) })
+      } else workers.push(member(child))
     }
     workers.sort(byRecent)
     subTeams.sort((a, b) => byRecent(a.lead, b.lead))
 
     const all = [member(lead), ...subTeams.flatMap(t => [t.lead, ...t.workers]), ...workers]
     const loop = loopFor(lead.key, loops)
-    let status = all.reduce<Status>((acc, m) => worst(acc, m.status), 'idle')
-    if (status === 'idle' && loop?.active) status = 'working'
+    const leadStatus = leadStatusOf(lead, loop)
+    // The rollup is for ordering and the project dot only, never a lead label.
+    const rollupStatus = all.slice(1).reduce<Status>((acc, m) => worst(acc, m.status), leadStatus)
 
     const prs = new Map<string, SourceLink>()
     for (const m of all) {
@@ -184,17 +323,20 @@ export function buildProjects(slots: Slot[], loops: Loop[]): Project[] {
       workers,
       memberCount: all.length - 1,
       activeCount: all.slice(1).filter(m => m.status !== 'idle').length,
-      status,
+      leadStatus,
+      rollupStatus,
+      subAttention: subAttentionOf(all.slice(1)),
       prs: [...prs.values()],
       repo: basename(lead.project),
       updated: all.map(m => updatedAt(m.slot)).sort().pop() ?? '',
       archived: false,
+      tree: treeUnder(lead.key, new Set([lead.key])),
     })
   }
 
   // Projects needing attention first, then most recently updated.
   return projects.sort(
-    (a, b) => STATUS_RANK[b.status] - STATUS_RANK[a.status] || b.updated.localeCompare(a.updated),
+    (a, b) => STATUS_RANK[b.rollupStatus] - STATUS_RANK[a.rollupStatus] || b.updated.localeCompare(a.updated),
   )
 }
 
@@ -207,12 +349,12 @@ export function loopText(loop: Loop | null): string {
 /* ---------------------------------------------------------------------------
  * Archived goals.
  *
- * A project's goals are its root `kirocrew-team-lead` sessions. The LIVE ones
+ * A project's goals are its root lead sessions (`isLeadAgent`). The LIVE ones
  * come from `/api/chat/slots` (above). The ARCHIVED ones are history sessions
  * with no open slot: `GET /api/sessions` lists every session file, each row
  * carrying `key`, `title`, `agent`, `folder_id` and `modified` (see core
  * `history_search.list_sessions`). An archived goal is a history row whose
- * agent is the team lead, filed in the project's folder, that no live slot
+ * agent is a lead (team lead or conductor), filed in the project's folder, that no live slot
  * already holds open. It has no live sub-team/worker rollup (its dispatched
  * sessions, if any, are themselves archived rows the project does not expand),
  * so it renders as a dimmed, openable goal.
@@ -263,7 +405,9 @@ function archivedGoal(s: ArchivedSession): Project {
     workers: [],
     memberCount: 0,
     activeCount: 0,
-    status: 'idle',
+    leadStatus: 'idle',
+    rollupStatus: 'idle',
+    subAttention: NO_SUB_ATTENTION,
     prs: [],
     repo: '',
     updated: archivedUpdatedAt(s),
@@ -272,9 +416,9 @@ function archivedGoal(s: ArchivedSession): Project {
 }
 
 /**
- * The archived team-lead goals of a project, newest first. An archived goal is
+ * The archived lead goals of a project, newest first. An archived goal is
  * a history row that:
- *   - is a `kirocrew-team-lead` session,
+ *   - is a lead session (`isLeadAgent`: the team lead or a conductor),
  *   - is filed in the project's folder subtree (`folder_id`),
  *   - and has NO live slot (`liveKeys`) — a goal open in a slot is live, and
  *     showing it twice would double-count it.
@@ -288,7 +432,7 @@ export function archivedGoalsIn(
 ): Project[] {
   const goals: Project[] = []
   for (const s of sessions) {
-    if (s.agent !== TEAM_LEAD_AGENT) continue
+    if (!isLeadAgent(s.agent)) continue
     const folderId = (s.folder_id || '').trim()
     if (!folderId || !subtree.has(folderId)) continue
     if (liveKeys.has(s.key)) continue
@@ -438,6 +582,34 @@ export function projectArtifacts(artifacts: LibraryArtifact[]): LibraryArtifact[
 /** The default agent a new project is created with. */
 export const DEFAULT_PROJECT_AGENT = TEAM_LEAD_AGENT
 
+/* Every chat and folder the app CREATES starts on the team lead, whatever the
+ * folder's own `default_agent` says: a folder another surface set up (e.g.
+ * Slack Code's auto folders, default `kirocrew-conductor`) must not turn a new
+ * goal into a conductor chat. The host's slot create honours the body's
+ * `agent` and does not consult the folder default, so naming it here is what
+ * decides. Existing chats and folders are never re-written. These builders are
+ * the only bodies App.tsx sends on its create paths (pinned in create.test.ts). */
+
+/** POST /api/chat/folders body for New project. */
+export function newProjectRequest(name: string, directories: readonly string[]): Record<string, unknown> {
+  const [first, ...rest] = directories
+  const body: Record<string, unknown> = { name, default_agent: TEAM_LEAD_AGENT }
+  if (first) body.project_dir = first
+  if (rest.length) body.extra_repos = rest
+  return body
+}
+
+/** POST /api/chat/slots body for New goal: a fresh team-lead chat filed into
+ *  the project's folder at birth. */
+export function newGoalRequest(p: Pick<FolderProject, 'folder'>): { agent: string; folder_id: string } {
+  return { agent: TEAM_LEAD_AGENT, folder_id: p.folder.id }
+}
+
+/** The openChat options that land the person in the goal chat just created. */
+export function newGoalLaunch(slotKey: string | undefined): { slotKey: string | undefined; agent: string; autoSend: false } {
+  return { slotKey, agent: TEAM_LEAD_AGENT, autoSend: false }
+}
+
 /**
  * A chat folder, mirroring the GET /api/chat/folders row shape on origin/main.
  * Only the fields this app reads are typed; the folder carries more (color,
@@ -474,10 +646,10 @@ export interface FolderProject {
   /** True when no working directory is set — the header shows a Set-directory
    *  prompt and NEVER guesses a path. */
   needsDir: boolean
-  /** The project's GOALS: each is a root `kirocrew-team-lead` session, with its
+  /** The project's GOALS: each is a root lead session (team lead or conductor), with its
    *  sub-team/worker rollup grouped UNDER it. Live goals (`archived: false`)
    *  come from the slot list and carry their agents, loop and status; archived
-   *  goals (`archived: true`) are history team-lead sessions with no live slot,
+   *  goals (`archived: true`) are history lead sessions with no live slot,
    *  shown dimmed and openable. A live goal is attached by `folder_id` (or a
    *  matching working directory when the goal has no folder); an archived goal
    *  is attached by `folder_id` only. Live goals first (worst status first),
@@ -586,7 +758,8 @@ export function buildFolderProjects(
     // The list dot and sort key read LIVE goals only: an archived goal is idle
     // by construction, so it would never raise the dot, and letting a long-dead
     // history row set `updated` would sink an active project down the list.
-    const status = liveGoals.reduce<Status>((acc, t) => worst(acc, t.status), 'idle')
+    // A genuine rollup: the project's dot counts every session of every goal.
+    const status = liveGoals.reduce<Status>((acc, t) => worst(acc, t.rollupStatus), 'idle')
     const updated = liveGoals.map(t => t.updated).sort().pop() ?? ''
     return {
       folder,
@@ -915,4 +1088,266 @@ export function schedulesState(
     return (a.next_run ?? Infinity) - (b.next_run ?? Infinity)
   })
   return { kind: 'ready', schedules: sorted }
+}
+
+/* ---------------------------------------------------------------------------
+ * Three-column workspace: which goal is selected, and what the middle column
+ * shows (the goal's lead chat, or one of its sessions opened in place).
+ * ------------------------------------------------------------------------- */
+
+/** When a goal was last active: the whole team's latest activity, falling back
+ *  to the lead's own timestamps. */
+export function goalActivity(g: Project): string {
+  return g.updated || g.lead.slot.last_activity_ts || g.lead.slot.last_ts || ''
+}
+
+/** The goal selected when the person has not picked one: the most recently
+ *  active LIVE goal; with no live goal, the most recent archived one; with no
+ *  goals at all, none. Ties keep the project's own goal order. */
+export function defaultGoalKey(goals: Project[]): string | null {
+  const live = goals.filter(g => !g.archived)
+  const pool = live.length ? live : goals
+  let best: Project | null = null
+  for (const g of pool) if (!best || goalActivity(g) > goalActivity(best)) best = g
+  return best ? best.lead.slot.key : null
+}
+
+/** The goal to show for a requested key: that goal when it still exists,
+ *  otherwise the default goal (a goal that vanished never leaves a blank page). */
+export function resolveGoal(goals: Project[], key: string | null): Project | null {
+  const picked = key ? goals.find(g => g.lead.slot.key === key) : undefined
+  if (picked) return picked
+  const fallback = defaultGoalKey(goals)
+  return goals.find(g => g.lead.slot.key === fallback) ?? null
+}
+
+/** Every session under a goal except its lead, flattened (sub-leads, their
+ *  workers, then the lead's direct workers). */
+export function goalMembers(goal: Project): Member[] {
+  return [...goal.subTeams.flatMap(st => [st.lead, ...st.workers]), ...goal.workers]
+}
+
+/** What the person has picked: a goal, and optionally one of its sessions
+ *  opened in the middle column in place of the lead chat. */
+export interface WorkspaceState {
+  goalKey: string | null
+  sessionKey: string | null
+}
+
+export type WorkspaceAction =
+  | { type: 'selectGoal'; key: string }
+  | { type: 'openSession'; key: string }
+  | { type: 'backToLead' }
+  /** Open one session of a goal in one step (Overview's Needs you and Recent
+   *  rows): the goal is selected and, unless the session IS its lead, that
+   *  session replaces the lead chat. */
+  | { type: 'openInGoal'; goalKey: string; sessionKey: string }
+
+/** Selecting a goal (even the current one) always resets the middle column to
+ *  that goal's lead; opening a session keeps the goal; Back returns to the lead. */
+export function workspaceReducer(s: WorkspaceState, a: WorkspaceAction): WorkspaceState {
+  switch (a.type) {
+    case 'selectGoal':
+      return { goalKey: a.key, sessionKey: null }
+    case 'openSession':
+      return { ...s, sessionKey: a.key }
+    case 'backToLead':
+      return { ...s, sessionKey: null }
+    case 'openInGoal':
+      return { goalKey: a.goalKey, sessionKey: a.sessionKey === a.goalKey ? null : a.sessionKey }
+  }
+}
+
+/** What the middle column draws for a state: the resolved goal and, when a
+ *  session of THAT goal is open, that session. A session key that does not
+ *  belong to the goal (it closed, or the goal changed) falls back to the lead. */
+export function middleTarget(
+  goals: Project[],
+  s: WorkspaceState,
+  extra: Member[] = [],
+): { goal: Project | null; session: Member | null } {
+  const goal = resolveGoal(goals, s.goalKey)
+  if (!goal || !s.sessionKey) return { goal, session: null }
+  const session = [...goalMembers(goal), ...extra].find(m => m.slot.key === s.sessionKey) ?? null
+  return { goal, session }
+}
+
+/** Which goal row the side panel marks selected: the resolved goal while the
+ *  middle shows its lead chat, and NONE while one of its sessions is open
+ *  there (only that session's row is selected then). `openKey` is the session
+ *  the middle actually draws, so a stale session key never deselects. */
+export function selectedGoalKey(goalKey: string | null, openKey: string | null): string | null {
+  return openKey ? null : goalKey
+}
+
+/** The colored state a session row shows, read only from the slot data the
+ *  app already has (`/api/chat/slots`): a pending tool approval, a question
+ *  waiting on the person, an interrupted turn, a running turn, or idle. `done`
+ *  is an idle session whose change has merged (its own source link says so).
+ *  Nothing here is read from a transcript. */
+export type SessionTone = 'done' | 'working' | 'needs_approval' | 'needs_you' | 'stalled' | 'idle'
+
+export function sessionTone(m: Member): SessionTone {
+  if (m.slot.pending_approval) return 'needs_approval'
+  if (m.status !== 'idle') return m.status
+  const merged = (m.slot.source_links ?? []).some(
+    l => (l.kind ?? 'change') === 'change' && l.state === 'merged',
+  )
+  return merged ? 'done' : 'idle'
+}
+
+/** One row of the goal's sessions tree: a sub-lead with its workers nested
+ *  one level under it, or a worker of the lead itself. */
+export interface SessionNode {
+  member: Member
+  role: 'sub-lead' | 'worker'
+  children: SessionNode[]
+}
+
+/** The goal's sessions as a tree. A live goal carries its full-depth tree
+ *  (`Project.tree`); otherwise the two-level rollup: sub-teams first (their
+ *  workers nested), then the lead's direct workers. */
+export function sessionTree(goal: Project): SessionNode[] {
+  if (goal.tree) return goal.tree
+  const leaf = (m: Member): SessionNode => ({ member: m, role: 'worker', children: [] })
+  return [
+    ...goal.subTeams.map<SessionNode>(st => ({ member: st.lead, role: 'sub-lead', children: st.workers.map(leaf) })),
+    ...goal.workers.map(leaf),
+  ]
+}
+
+/* ---------------------------------------------------------------------------
+ * Task board: a goal lead's WORK LEDGER drawn as a permanent board.
+ *
+ * DORMANT on today's host. No host route serves a session's work ledger to an
+ * app: `/api/work-ledger` is MCP-only and keyed by the caller's own session,
+ * `/api/crew-board` and `/api/members/{slug}/dashboard` are owner-only (an app
+ * principal is never the owner) and mask `worker_session_key`. So the page only
+ * draws a board when a `BoardSource` is supplied; without one it shows the
+ * sessions tree above. Nothing here is derived from transcripts.
+ * ------------------------------------------------------------------------- */
+
+/** One work-ledger item, the fields the board reads (WorkItem.to_dict()). */
+export interface LedgerItem {
+  item_id: string
+  title: string
+  /** open | accepted | rejected | abandoned */
+  state: string
+  /** The worker's last report: progress | done | blocked | question. */
+  status?: string | null
+  /** On blocked/question: approval | needs_human when only a person can move it. */
+  reason?: string | null
+  summary?: string
+  worker_session_key?: string
+  stale?: boolean
+}
+
+export interface LedgerRead {
+  items: LedgerItem[]
+}
+
+/** Whether a ledger read is something to draw. The board appears only when a
+ *  source answers with at least one item; null, a malformed body or an empty
+ *  ledger all keep the sessions tree. */
+export function ledgerHasData(read: unknown): read is LedgerRead {
+  const items = (read as LedgerRead | null | undefined)?.items
+  return Array.isArray(items) && items.length > 0
+}
+
+/** Reads a conductor session's ledger; resolves null when it owns none. */
+export type BoardSource = (conductorKey: string) => Promise<LedgerRead | null>
+
+export type TaskTone = 'done' | 'working' | 'needs_you' | 'stuck' | 'waiting'
+
+export interface TaskRow {
+  id: string
+  title: string
+  tone: TaskTone
+  summary: string
+  /** The worker's LIVE session key, when it has one to open. */
+  sessionKey: string | null
+  /** A worker that is itself a conductor: its own tasks, one level down. */
+  children: TaskRow[]
+}
+
+export interface NeedsYouRow {
+  id: string
+  title: string
+  waitsFor: 'approval' | 'needs_human'
+  summary: string
+  sessionKey: string | null
+}
+
+export interface TaskBoard {
+  rows: TaskRow[]
+  needsYou: NeedsYouRow[]
+  /** Top-level tasks accepted / top-level tasks on the board. */
+  done: number
+  total: number
+  /** The goal's sessions bound to no task on the board (or a nested one). */
+  otherSessions: Member[]
+}
+
+const ASKING = new Set(['blocked', 'question'])
+const PERSON_REASONS = new Set(['approval', 'needs_human'])
+
+/** Why an item waits on the PERSON, or null. A pending tool approval on the
+ *  worker's session counts even when the worker has not reported it. */
+export function waitsOnPerson(item: LedgerItem, slot?: Slot): 'approval' | 'needs_human' | null {
+  if (item.state !== 'open') return null
+  if (ASKING.has(item.status ?? '') && PERSON_REASONS.has(item.reason ?? '')) {
+    return item.reason as 'approval' | 'needs_human'
+  }
+  return slot?.pending_approval ? 'approval' : null
+}
+
+/** The colored state one task shows. */
+export function taskTone(item: LedgerItem, slot?: Slot): TaskTone {
+  if (item.state === 'accepted') return 'done'
+  if (item.state === 'rejected' || item.state === 'abandoned') return 'stuck'
+  if (waitsOnPerson(item, slot)) return 'needs_you'
+  if (item.status === 'blocked' || item.stale || slot?.interrupted) return 'stuck'
+  // A worker's 'done' is a claim awaiting the conductor's verdict; a question
+  // without a person reason waits on the conductor too.
+  if (item.status === 'done' || item.status === 'question') return 'waiting'
+  if (slot?.running || item.status === 'progress') return 'working'
+  return 'waiting'
+}
+
+/** Build the board for a goal from its lead's ledger. `nested` answers a
+ *  worker's own ledger (a sub-conductor), drawn one level under its task. */
+export function buildTaskBoard(
+  goal: Project,
+  ledger: LedgerRead,
+  slotsByKey: Map<string, Slot>,
+  nested: (workerKey: string) => LedgerRead | null = () => null,
+): TaskBoard {
+  const bound = new Set<string>()
+  const needsYou: NeedsYouRow[] = []
+  const toRow = (item: LedgerItem, depth: number): TaskRow => {
+    const key = (item.worker_session_key || '').trim()
+    if (key) bound.add(key)
+    const slot = key ? slotsByKey.get(key) : undefined
+    const waits = waitsOnPerson(item, slot)
+    if (waits) {
+      needsYou.push({ id: item.item_id, title: item.title, waitsFor: waits, summary: item.summary || '', sessionKey: slot ? key : null })
+    }
+    const sub = depth === 0 && key ? nested(key) : null
+    return {
+      id: item.item_id,
+      title: item.title,
+      tone: taskTone(item, slot),
+      summary: item.summary || '',
+      sessionKey: slot ? key : null,
+      children: sub ? (sub.items ?? []).map(i => toRow(i, depth + 1)) : [],
+    }
+  }
+  const rows = (ledger.items ?? []).map(i => toRow(i, 0))
+  return {
+    rows,
+    needsYou,
+    done: rows.filter(r => r.tone === 'done').length,
+    total: rows.length,
+    otherSessions: goalMembers(goal).filter(m => !bound.has(m.slot.key)),
+  }
 }

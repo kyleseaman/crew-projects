@@ -13,11 +13,16 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from '../App'
+import { boardSourceFixture } from './fixtures'
 
 // The host's real theme tokens (every dashboard theme), so the harness looks
 // exactly like the installed app. Pick one with ?theme=<id>, e.g. ?theme=light,
 // ?theme=nord-dark; the default is the dashboard default (dark).
 import './host-themes.css'
+// The host's global rules (preflight, body font/line-height, the global
+// scrollbar) and the composer utilities, so the embedded composer meets the
+// same cascade as on the real host.
+import './host-globals.css'
 
 function applyTheme(): void {
   const root = document.documentElement
@@ -25,7 +30,6 @@ function applyTheme(): void {
   document.body.style.margin = '0'
   document.body.style.background = 'var(--bg)'
   document.body.style.color = 'var(--text)'
-  document.body.style.font = '14px system-ui, -apple-system, sans-serif'
   // The skeleton pulse the stub references; harmless in the real host too.
   const style = document.createElement('style')
   style.textContent = '@keyframes tp-skel-pulse{0%,100%{opacity:.5}50%{opacity:.9}}'
@@ -38,6 +42,11 @@ const client = new QueryClient({
 
 applyTheme()
 
+// `?board=1` hands the app a fixture work-ledger source so the task board can
+// be developed and screenshotted; without it the app behaves as on today's
+// host (no ledger route for apps) and shows each goal's sessions tree.
+const boardSource = new URLSearchParams(location.search).get('board') === '1' ? boardSourceFixture : undefined
+
 const el = document.getElementById('root')
 if (!el) throw new Error('harness: #root not found')
 
@@ -47,7 +56,7 @@ createRoot(el).render(
       {/* The host page is a flex column that gives the app its height; mirror
           that so the app's flex:1 layout fills the viewport. */}
       <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-        <App />
+        <App boardSource={boardSource} />
       </div>
     </QueryClientProvider>
   </React.StrictMode>,

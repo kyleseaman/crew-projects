@@ -43,7 +43,9 @@ describe('buildProjects', () => {
     expect(p.workers.map(w => w.slot.key)).toEqual(['W3'])
     expect(p.memberCount).toBe(4)
     expect(p.activeCount).toBe(1)
-    expect(p.status).toBe('working')
+    // A running worker rolls up; the idle lead itself stays idle.
+    expect(p.rollupStatus).toBe('working')
+    expect(p.leadStatus).toBe('idle')
   })
 
   it('treats a team lead created by another lead as a sub-team, not a second project', () => {
@@ -74,14 +76,17 @@ describe('buildProjects', () => {
       kid('B', 'L', { pending_approval: true }),
     ]
     const [p] = buildProjects(slots, [])
-    expect(p.status).toBe('needs_you')
+    expect(p.rollupStatus).toBe('needs_you')
+    expect(p.leadStatus).toBe('idle')
+    expect(p.subAttention.needsYou.map(m => m.slot.key)).toEqual(['B'])
     expect(p.prs).toHaveLength(1)
   })
 
   it('marks an idle lead with an active loop as working and reads its cycle', () => {
     const loops = [{ slot_key: 'L', active: true, cycle_count: 1, max_cycles: 300 }]
     const [p] = buildProjects([lead('L')], loops)
-    expect(p.status).toBe('working')
+    expect(p.leadStatus).toBe('working')
+    expect(p.rollupStatus).toBe('working')
     expect(loopText(p.loop)).toBe('1/300')
   })
 })
@@ -236,7 +241,7 @@ describe('archivedGoalsIn', () => {
     ]
     const goals = archivedGoalsIn(sessions, subtree, live)
     expect(goals.map(g => g.lead.slot.key)).toEqual(['g2', 'g1']) // newest first
-    expect(goals.every(g => g.archived && g.memberCount === 0 && g.loop === null && g.status === 'idle')).toBe(true)
+    expect(goals.every(g => g.archived && g.memberCount === 0 && g.loop === null && g.leadStatus === 'idle' && g.rollupStatus === 'idle' && g.subAttention.stalled.length === 0)).toBe(true)
   })
 
   it('converts the modified epoch-seconds into an ISO updated timestamp', () => {

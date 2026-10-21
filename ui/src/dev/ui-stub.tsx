@@ -41,7 +41,9 @@ export function Badge({ variant, children, ...rest }: { variant: Variant; childr
 
 export const Btn = forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { danger?: boolean; primary?: boolean }>(
   function Btn({ primary, danger, children, style, ...rest }, ref) {
-    const bg = danger ? 'var(--danger)' : primary ? 'var(--accent)' : 'var(--card)'
+    // Mirrors the host Btn (website/src/components/ui.tsx): primary is filled
+    // accent; the default is OUTLINED on a transparent background, not filled.
+    const bg = danger ? 'var(--danger)' : primary ? 'var(--accent)' : 'transparent'
     const fg = primary || danger ? 'var(--accent-fg, #fff)' : 'var(--text)'
     return (
       <button

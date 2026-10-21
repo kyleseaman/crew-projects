@@ -5,13 +5,13 @@ import { css } from './styles'
 // Guards the failure that shipped in the Subscriptions panel: App used
 // `tp-sub-row` while styles.ts defined `.tp-subs-row`, so rows rendered unstyled
 // and no test noticed. Every literal tp-* class App renders must have a rule.
-const NO_RULE_NEEDED = new Set([
-  'tp-cell-task', // layout hook only; the grid on .tp-mrow places it
-])
+const NO_RULE_NEEDED = new Set<string>()
 
 describe('class names', () => {
-  it('every tp-* class used in App.tsx has a CSS rule', () => {
-    const app = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8')
+  it('every tp-* class used in the components has a CSS rule', () => {
+    const app = ['App.tsx', 'Workspace.tsx', 'Overview.tsx', 'parts.tsx', 'Layout.tsx']
+      .map(f => readFileSync(new URL(`./${f}`, import.meta.url), 'utf8'))
+      .join('\n')
     const literals = [...app.matchAll(/className=\{?[`"]([^`"]*)/g)].map(m => m[1])
     const used = new Set(
       literals

@@ -1,0 +1,66 @@
+/*
+ * Dev-only: the host dashboard's GLOBAL rules that decide how the embedded
+ * composer sizes and scrolls, copied from the installed host's stylesheet
+ * (kiro_crew/static/dist/assets/src-*.css, built from website/src/index.css and
+ * Tailwind's preflight), plus the handful of Tailwind utilities the host's
+ * ChatEmbed composer row uses. The harness's ChatEmbed stub renders the host's
+ * own class strings, so the app's CSS meets the same cascade it meets on the
+ * real host. Never part of dist/index.mjs.
+ */
+
+/* Tailwind preflight (the host's base layer). */
+*,::after,::before{box-sizing:border-box}
+html{line-height:1.5}
+button,input,select,optgroup,textarea{font:inherit;letter-spacing:inherit;color:inherit;background-color:#0000;border-radius:0}
+textarea{resize:vertical}
+
+/* website/src/index.css body + the global scrollbar (every scroll box that is
+   neither .scroll-fade nor .scrollbar-overlay). */
+body{font:400 .875rem/1.55 var(--font-body,system-ui,-apple-system,sans-serif)}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--muted);border-radius:9999px}
+::-webkit-scrollbar-thumb:hover{background:var(--text)}
+
+/* The utilities on the host ChatEmbed's composer row and textarea
+   (website/src/app-sdk/ChatEmbed.tsx), same single-class specificity. */
+.flex{display:flex}
+.items-end{align-items:flex-end}
+.gap-2{gap:.5rem}
+.px-3{padding-inline:.75rem}
+.py-2{padding-block:.5rem}
+.p-2{padding:.5rem}
+.shrink-0{flex-shrink:0}
+.flex-1{flex:1}
+.min-w-0{min-width:0}
+.min-h-\[38px\]{min-height:38px}
+.min-h-0{min-height:0}
+.resize-none{resize:none}
+.overflow-y-auto{overflow-y:auto}
+.mc-message-font-text{font-size:var(--mc-message-font-size,14px)}
+.bg-bg-elevated{background-color:var(--bg-elevated)}
+.border{border-style:solid;border-width:1px}
+.border-border{border-color:var(--border)}
+.rounded-md{border-radius:.375rem}
+.text-text{color:var(--text)}
+.text-muted{color:var(--muted)}
+.outline-hidden{outline:2px solid #0000;outline-offset:2px}
+.focus-visible\:border-accent:focus-visible{border-color:var(--accent)}
+.transition-colors{transition-property:color,background-color,border-color;transition-duration:.15s}
+
+/* The utilities on the host's follow-up chip rows (FollowUpBar.tsx,
+   MultilineLayout + chipClassName) and the chip width cap
+   (website/src/styles/focus-and-state-cues.css). */
+.flex-wrap{flex-wrap:wrap}
+.gap-1\.5{gap:.375rem}
+.pt-1{padding-top:.25rem}
+.py-1\.5{padding-block:.375rem}
+.mc-message-font-chip{font-size:var(--mc-message-font-size-chip,13px)}
+.text-left{text-align:left}
+.leading-snug{line-height:1.375}
+.transition-all{transition-property:all;transition-duration:.15s}
+.border-transparent{border-color:#0000}
+.rounded-lg{border-radius:.5rem}
+.block{display:block}
+.truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.followup-chip{max-width:min(100%,clamp(18rem,calc(50% - 0.1875rem),26rem))}

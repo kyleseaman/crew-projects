@@ -1,27 +1,20 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type CSSProperties } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { STATUS_QUERY_KEY } from './TrustControl'
 import { useAppApi, useAppEvents, useAppInfo, useChatLauncher, useNavigate, fmtRelative } from '@kirocrew/app-sdk'
-import { Badge, Btn, Clickable, EmptyState, ErrorNotice, PageHeader, SearchInput, Skeleton } from '@kirocrew/app-sdk/ui'
+import { Badge, Btn, Clickable, EmptyState, ErrorNotice, PageHeader, SearchInput } from '@kirocrew/app-sdk/ui'
 import {
   BellRing,
   BookText,
   CalendarClock,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  CircleHelp,
   FileText,
   FolderGit2,
   FolderKanban,
-  GitPullRequest,
   Hash,
-  Inbox,
   Library,
-  PauseCircle,
   Package,
   Plus,
   Radar,
-  RefreshCw,
   Satellite,
   Settings,
   Users,
@@ -29,85 +22,42 @@ import {
 } from 'lucide-react'
 import {
   buildFolderProjects,
-  buildInbox,
   buildSubscriptions,
   schedulesState,
   type ProjectSchedule,
   type ProjectSchedulesPage,
   type SchedulesState,
   dedupeProjectPrs,
-  loopText,
   projectArtifacts,
   projectOutputFiles,
   projectSessionKeys,
   repoName,
   DEFAULT_PROJECT_AGENT,
+  newGoalLaunch,
+  newGoalRequest,
+  newProjectRequest,
   TEAM_LEAD_AGENT,
   type ArchivedSession,
   type ArtifactsPage,
+  type BoardSource,
   type Folder,
   type FolderProject,
-  type InboxItem,
-  type InboxKind,
   type LibraryArtifact,
   type Loop,
-  type Member,
-  type Project,
   type SessionDoc,
   type SessionsPage,
   type Slot,
-  type SourceLink,
-  type Status,
   type Subscription,
   type SubscriptionKind,
 } from './model'
+import { PrChip, POLL_MS, StatusDot, when } from './parts'
+import { buildOverview } from './overview'
+import { DOCS_TIMEOUT_MS, groupState, withTimeout, type GroupState } from './library'
 import { t } from './strings'
 import { css } from './styles'
-
-const POLL_MS = 5000
-
-const STATUS_VARIANT: Record<Status, 'ok' | 'err' | 'warn' | 'aim' | 'muted'> = {
-  needs_you: 'warn',
-  stalled: 'err',
-  working: 'aim',
-  idle: 'muted',
-}
-
-function when(ts: string): string {
-  return ts ? fmtRelative(ts) : ''
-}
-
-function StatusDot({ status }: { status: Status }) {
-  return <span className={`tp-dot tp-dot-${status}`} aria-hidden="true" />
-}
-
-function PrChip({ link }: { link: SourceLink }) {
-  const ci = link.ci ? t.ci[link.ci] : ''
-  return (
-    <a
-      className={`tp-chip ${link.ci ? `tp-ci-${link.ci}` : ''}`}
-      href={link.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      title={ci || link.url}
-      onClick={e => e.stopPropagation()}
-    >
-      <GitPullRequest size={11} aria-hidden="true" />#{link.number}
-      {ci && <span className="tp-sr">{ci}</span>}
-    </a>
-  )
-}
-
-function LoopLine({ loop }: { loop: Loop | null }) {
-  if (!loop) return null
-  const n = loopText(loop)
-  return (
-    <span className="tp-loop">
-      <RefreshCw size={11} aria-hidden="true" />
-      {loop.active ? t.loop(n) : t.loopStopped(n)}
-    </span>
-  )
-}
+import { Workspace } from './Workspace'
+import { ColumnGrabber, usePanelLayout } from './Layout'
+import { PageSkeleton, ScheduleRowsSkeleton } from './Skeletons'
 
 /** One project row in the sidebar list. A project is a folder. */
 function ProjectRow({ p, selected, onSelect }: { p: FolderProject; selected: boolean; onSelect: () => void }) {
@@ -142,107 +92,6 @@ function ProjectRow({ p, selected, onSelect }: { p: FolderProject; selected: boo
         </div>
       )}
     </Clickable>
-  )
-}
-
-function MemberRow({ m, role, indent, onOpen }: { m: Member; role: string; indent?: boolean; onOpen: (key: string) => void }) {
-  const s = m.slot
-  const links = (s.source_links ?? []).filter(l => (l.kind ?? 'change') === 'change')
-  return (
-    <Clickable className="tp-mrow" onClick={() => onOpen(s.key)} aria-label={`${t.open}: ${s.title || t.untitled}`}>
-      <div className={`tp-cell-task ${indent ? 'tp-indent2' : ''}`}>
-        <div className="tp-row-top">
-          <StatusDot status={m.status} />
-          <span className="tp-title tp-weight-normal">{s.title || t.untitled}</span>
-        </div>
-        <div className="tp-muted tp-indent">{role} · {s.agent || ''}</div>
-      </div>
-      <div className="tp-cell-step tp-muted tp-clamp">
-        {m.status !== 'idle' && <Badge variant={STATUS_VARIANT[m.status]}>{t.status[m.status]}</Badge>}{' '}
-        {s.last_message || ''}
-      </div>
-      <div className="tp-cell-pr tp-chips">{links.map(l => <PrChip key={l.url} link={l} />)}</div>
-      <div className="tp-cell-time tp-muted tp-nowrap">{when(s.last_activity_ts || s.last_ts || '')}</div>
-    </Clickable>
-  )
-}
-
-/** One goal inside a project: a team-lead session and everything it
- *  dispatched, grouped at most two levels deep. An ARCHIVED goal (a history
- *  team-lead session with no live slot) renders dimmed, with no rollup — just
- *  the lead and an Open button. */
-function GoalCard({ goal, loops, onOpen }: { goal: Project; loops: Loop[]; onOpen: (key: string) => void }) {
-  const [workersOpen, setWorkersOpen] = useState(true)
-  const s = goal.lead.slot
-  const subLoop = (key: string) => loops.find(l => l.slot_key === key && l.active) ?? null
-
-  if (goal.archived) {
-    return (
-      <div className="tp-team tp-team-archived">
-        <div className="tp-lead">
-          <div className="tp-lead-body">
-            <div className="tp-muted tp-row-top tp-wrap">
-              <Badge variant="muted">{t.archivedGoal}</Badge>
-              <span>{t.lead} · {TEAM_LEAD_AGENT}</span>
-              {s.last_activity_ts && <span>· {when(s.last_activity_ts)}</span>}
-            </div>
-            <h3 className="tp-h3 tp-h3-archived">{s.title || t.untitled}</h3>
-          </div>
-          <Btn onClick={() => onOpen(s.key)}>{t.openGoal}</Btn>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="tp-team">
-      <div className="tp-lead">
-        <div className="tp-lead-body">
-          <div className="tp-muted">{t.lead} · {TEAM_LEAD_AGENT} · {when(s.last_activity_ts || s.last_ts || '')}</div>
-          <h3 className="tp-h3">{s.title || t.untitled}</h3>
-          <div className="tp-muted tp-row-top tp-wrap">
-            <Badge variant={STATUS_VARIANT[goal.status]}>{t.status[goal.status]}</Badge>
-            <LoopLine loop={goal.loop} />
-            {goal.memberCount > 0 && <span>{t.agents(goal.memberCount)} · {t.active(goal.activeCount)}</span>}
-          </div>
-          {s.last_message && <p className="tp-last tp-clamp">{s.last_message}</p>}
-        </div>
-        <Btn primary onClick={() => onOpen(s.key)}>{t.openLead}</Btn>
-      </div>
-
-      {goal.memberCount === 0 ? (
-        <p className="tp-muted tp-pad">{t.noAgents}</p>
-      ) : (
-        <div className="tp-table" role="list">
-          <div className="tp-thead" aria-hidden="true">
-            <span>{t.task}</span><span>{t.step}</span><span>{t.prs}</span><span>{t.updated}</span>
-          </div>
-          {goal.subTeams.map(sub => (
-            <div key={sub.lead.slot.key} role="listitem">
-              <div className="tp-group">
-                <Users size={12} aria-hidden="true" />
-                {t.subTeam} · {sub.lead.slot.title || t.untitled}
-                <span className="tp-muted">
-                  <LoopLine loop={subLoop(sub.lead.slot.key)} />
-                </span>
-              </div>
-              <MemberRow m={sub.lead} role={t.subLead} onOpen={onOpen} />
-              {sub.workers.map(w => <MemberRow key={w.slot.key} m={w} role={t.worker} indent onOpen={onOpen} />)}
-            </div>
-          ))}
-          {goal.workers.length > 0 && (
-            <div role="listitem">
-              <Clickable className="tp-group tp-group-btn" onClick={() => setWorkersOpen(o => !o)} aria-expanded={workersOpen}>
-                {workersOpen ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}
-                {t.workers} · {goal.workers.length}
-                <span className="tp-muted">{t.active(goal.workers.filter(w => w.status !== 'idle').length)}</span>
-              </Clickable>
-              {workersOpen && goal.workers.map(w => <MemberRow key={w.slot.key} m={w} role={t.worker} onOpen={onOpen} />)}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
   )
 }
 
@@ -282,63 +131,69 @@ function FileRow({ d }: { d: SessionDoc }) {
   )
 }
 
-/** The project's Library: artifacts and output files produced across its
- *  sessions, plus de-duplicated PRs. Artifacts/files come from the host via
- *  `chat_folder`-scoped and all-sessions queries respectively, filtered to the
- *  project's own sessions; the PRs come from the goals the project already
- *  carries. When the project has no folder (so the folder-scoped artifact
- *  listing can't be queried), the files view degrades to an unavailable state
- *  and the PRs still show. */
-function LibrarySection({
-  prs,
+/** The project's Library: FILES only, the artifacts and output files produced
+ *  across its sessions (pull requests are on the Overview tab). Artifacts come
+ *  from the folder-scoped artifact listing; output files from the host's
+ *  all-sessions session-docs scan, filtered to the project's own sessions.
+ *  That scan reads every session's history, so it is slow on a large install
+ *  (about 13 s over ~530 sessions); each group therefore shows its own
+ *  one-line loading note, its own error, and its rows as soon as they land.
+ *  When the project has no folder id, both groups degrade to one
+ *  unavailable note. */
+export function LibrarySection({
   artifacts,
   files,
   filesAvailable,
-  loading,
-  error,
+  artifactsState,
+  filesState,
   onOpenArtifact,
+  compact = false,
 }: {
-  prs: SourceLink[]
   artifacts: LibraryArtifact[]
   files: SessionDoc[]
   filesAvailable: boolean
-  loading: boolean
-  error: string
+  artifactsState: GroupState
+  filesState: GroupState
   onOpenArtifact: (slug: string) => void
+  /** Inside a tab whose label already names it. */
+  compact?: boolean
 }) {
-  const hasAnything = prs.length > 0 || artifacts.length > 0 || files.length > 0
+  const settled = !artifactsState.loading && !filesState.loading && !artifactsState.error && !filesState.error
+  const empty = settled && artifacts.length === 0 && files.length === 0
 
   return (
     <section className="tp-library" aria-label={t.library}>
-      <div className="tp-lib-head">
-        <Library size={14} aria-hidden="true" />
-        <h3 className="tp-h3">{t.library}</h3>
-        <span className="tp-muted">{t.librarySubtitle}</span>
-      </div>
+      {compact ? (
+        <p className="tp-muted tp-fold-sub">{t.librarySubtitle}</p>
+      ) : (
+        <div className="tp-lib-head">
+          <Library size={14} aria-hidden="true" />
+          <h3 className="tp-h3">{t.library}</h3>
+          <span className="tp-muted">{t.librarySubtitle}</span>
+        </div>
+      )}
 
-      {/* Files view: artifacts + output files. Unavailable when the project has
-          no folder to scope the listing to; the host error degrades the same
-          way, with the deduped PRs still shown below. */}
       {!filesAvailable ? (
         <div className="tp-lib-unavail" role="note">
           <strong className="tp-lib-unavail-title">{t.libraryFilesUnavailable}</strong>
           <p className="tp-muted">{t.libraryFilesUnavailableBody}</p>
         </div>
-      ) : error ? (
-        <div className="tp-lib-unavail" role="note">
-          <strong className="tp-lib-unavail-title">{t.libraryLoadError}</strong>
-          <p className="tp-muted">{error}</p>
-        </div>
-      ) : loading ? (
-        <div className="tp-lib-loading"><Skeleton className="tp-lib-skel" /><Skeleton className="tp-lib-skel" /></div>
+      ) : empty ? (
+        <p className="tp-muted tp-lib-empty" role="note">{t.libraryEmpty}</p>
       ) : (
         <>
           <div className="tp-lib-group">
             <div className="tp-lib-grouphead">
               <Package size={12} aria-hidden="true" /> {t.libraryArtifacts}
-              <span className="tp-muted">{t.libraryArtifactsCount(artifacts.length)}</span>
+              {!artifactsState.loading && !artifactsState.error && (
+                <span className="tp-muted">{t.libraryArtifactsCount(artifacts.length)}</span>
+              )}
             </div>
-            {artifacts.length === 0 ? (
+            {artifactsState.error ? (
+              <p className="tp-muted tp-lib-empty" role="note">{t.libraryArtifactsError}</p>
+            ) : artifactsState.loading ? (
+              <p className="tp-muted tp-lib-empty" role="status">{t.libraryLoadingArtifacts}</p>
+            ) : artifacts.length === 0 ? (
               <p className="tp-muted tp-lib-empty">{t.libraryNoArtifacts}</p>
             ) : (
               <div className="tp-lib-list" role="list">
@@ -350,9 +205,15 @@ function LibrarySection({
           <div className="tp-lib-group">
             <div className="tp-lib-grouphead">
               <FileText size={12} aria-hidden="true" /> {t.libraryFiles}
-              <span className="tp-muted">{t.libraryFilesCount(files.length)}</span>
+              {!filesState.loading && !filesState.error && (
+                <span className="tp-muted">{t.libraryFilesCount(files.length)}</span>
+              )}
             </div>
-            {files.length === 0 ? (
+            {filesState.error ? (
+              <p className="tp-muted tp-lib-empty" role="note">{t.libraryFilesError}</p>
+            ) : filesState.loading ? (
+              <p className="tp-muted tp-lib-empty" role="status">{t.libraryLoadingFiles}</p>
+            ) : files.length === 0 ? (
               <p className="tp-muted tp-lib-empty">{t.libraryNoFiles}</p>
             ) : (
               <div className="tp-lib-list" role="list">
@@ -361,26 +222,6 @@ function LibrarySection({
             )}
           </div>
         </>
-      )}
-
-      {/* PRs always show — they come from the project's own sessions, so they
-          survive the files-unavailable degrade. */}
-      <div className="tp-lib-group">
-        <div className="tp-lib-grouphead">
-          <GitPullRequest size={12} aria-hidden="true" /> {t.libraryPrs}
-          <span className="tp-muted">{t.libraryPrsCount(prs.length)}</span>
-        </div>
-        {prs.length === 0 ? (
-          <p className="tp-muted tp-lib-empty">{t.libraryNoPrs}</p>
-        ) : (
-          <div className="tp-chips tp-lib-prs">
-            {prs.map(l => <PrChip key={l.url} link={l} />)}
-          </div>
-        )}
-      </div>
-
-      {filesAvailable && !loading && !error && !hasAnything && (
-        <p className="tp-muted tp-lib-empty">{t.libraryEmpty}</p>
       )}
     </section>
   )
@@ -456,29 +297,34 @@ function ScheduleRow({ job, onOpen }: { job: ProjectSchedule; onOpen: (key: stri
   )
 }
 
-function SubscriptionsSection({
+export function SubscriptionsSection({
   subs,
   schedules,
   canAdd,
   onOpen,
   onAdd,
+  compact = false,
 }: {
   subs: Subscription[]
   schedules: SchedulesState
   canAdd: boolean
   onOpen: (key: string) => void
   onAdd: () => void
+  /** Inside a collapsed side section whose summary already names it. */
+  compact?: boolean
 }) {
   const monitors = subs.filter(s => s.kind === 'monitor')
   const slack = subs.filter(s => s.kind === 'slack')
   const scheduleRows = schedules.kind === 'ready' ? schedules.schedules : []
-  const nothing = subs.length === 0 && scheduleRows.length === 0
+  // Never "no subscriptions" while the schedules read is still out: that
+  // empty note would show and then vanish when the schedules land.
+  const nothing = subs.length === 0 && scheduleRows.length === 0 && schedules.kind !== 'loading'
 
   return (
     <section className="tp-subs" aria-label={t.subscriptions}>
       <div className="tp-subs-head">
-        <Satellite size={14} aria-hidden="true" />
-        <h3 className="tp-h3">{t.subscriptions}</h3>
+        {!compact && <Satellite size={14} aria-hidden="true" />}
+        {!compact && <h3 className="tp-h3">{t.subscriptions}</h3>}
         <span className="tp-muted tp-subs-sub">{t.subscriptionsSubtitle}</span>
         {canAdd && (
           <Btn onClick={onAdd}>
@@ -533,6 +379,9 @@ function SubscriptionsSection({
             <span className="tp-muted">{t.subSchedulesCount(scheduleRows.length)}</span>
           )}
         </div>
+        {schedules.kind === 'loading' && (
+          <div role="status" aria-label={t.schedulesLoading}><ScheduleRowsSkeleton rows={2} /></div>
+        )}
         {schedules.kind === 'unavailable' && (
           <div className="tp-subs-unavail" role="note">
             <strong className="tp-subs-unavail-title">{t.subSchedulesUnavailable}</strong>
@@ -552,61 +401,34 @@ function SubscriptionsSection({
   )
 }
 
-/** The project page: the folder header (repos, default agent, read-only
- *  instructions + a settings link, or a Set-directory prompt), then every
- *  team rollup attached to the project, and the project's Library. */
-function ProjectPage({
+/** The side panel's Project, Subscriptions and Library tabs: the folder's
+ *  details (repositories, default agent, read-only instructions, Folder
+ *  settings), what watches on its behalf, and its Library. Each fills its tab
+ *  (Layout.tsx's SidePanel); none is stacked under the goals any more. */
+function projectPanes({
   p,
-  loops,
   library,
   subscriptions,
   schedules,
   onOpen,
   onOpenArtifact,
-  onNewGoal,
   onSettings,
   onAddSubscription,
 }: {
   p: FolderProject
-  loops: Loop[]
   library: LibraryData
   subscriptions: Subscription[]
   schedules: SchedulesState
   onOpen: (key: string) => void
   onOpenArtifact: (slug: string) => void
-  onNewGoal: (p: FolderProject) => void
-  onSettings: (p: FolderProject) => void
-  onAddSubscription: (p: FolderProject) => void
+  onSettings: () => void
+  onAddSubscription: () => void
 }) {
-  const liveGoals = p.goals.filter(g => !g.archived)
-  const archivedGoals = p.goals.filter(g => g.archived)
-  return (
-    <div className="tp-detail">
-      <header className="tp-phead">
-        <div className="tp-phead-top">
-          <div className="tp-phead-title">
-            <FolderKanban size={18} aria-hidden="true" />
-            <h2 className="tp-h2">{p.folder.name}</h2>
-          </div>
-          <div className="tp-phead-actions">
-            <Btn onClick={() => onSettings(p)}>
-              <Settings size={13} className="lucide-inline" aria-hidden="true" /> {t.folderSettings}
-            </Btn>
-            <Btn primary onClick={() => onNewGoal(p)}>
-              <Plus size={13} className="lucide-inline" aria-hidden="true" /> {t.newGoal}
-            </Btn>
-          </div>
-        </div>
-
-        {p.needsDir ? (
-          <div className="tp-setdir" role="note">
-            <div className="tp-setdir-body">
-              <strong className="tp-setdir-title">{t.setDirectoryTitle}</strong>
-              <p className="tp-muted">{t.setDirectoryBody}</p>
-            </div>
-            <Btn onClick={() => onSettings(p)}>{t.setDirectory}</Btn>
-          </div>
-        ) : (
+  const hasLiveGoal = p.goals.some(g => !g.archived)
+  return {
+    project: (
+      <section className="tp-tabsec" aria-label={t.projectDetails}>
+        {!p.needsDir && (
           <dl className="tp-meta">
             <div className="tp-meta-item">
               <dt className="tp-meta-label">
@@ -622,14 +444,14 @@ function ProjectPage({
               <dt className="tp-meta-label"><Users size={12} aria-hidden="true" /> {t.defaultAgentHeader}</dt>
               <dd className="tp-meta-val"><span className="tp-chip">{p.defaultAgent}</span></dd>
             </div>
-            <div className="tp-meta-item tp-meta-wide">
+            <div className="tp-meta-item">
               <dt className="tp-meta-label">
                 <BookText size={12} aria-hidden="true" /> {t.instructions}
-                <span className="tp-muted tp-ro">· {t.instructionsReadOnly}</span>
               </dt>
               <dd className="tp-meta-val">
+                <span className="tp-muted tp-ro">{t.instructionsReadOnly}</span>
                 {p.instructions.length === 0 ? (
-                  <span className="tp-muted">{t.noInstructions}</span>
+                  <span className="tp-muted tp-block">{t.noInstructions}</span>
                 ) : (
                   <ul className="tp-instr">
                     {p.instructions.map(d => <li key={d} className="tp-chip tp-instr-item" title={d}>{d}</li>)}
@@ -639,71 +461,52 @@ function ProjectPage({
             </div>
           </dl>
         )}
-      </header>
-
-      {p.goals.length === 0 ? (
-        <div className="tp-nogoals tp-pad">
-          <p className="tp-muted">{t.noGoals}</p>
-          <Btn primary onClick={() => onNewGoal(p)}>
-            <Plus size={13} className="lucide-inline" aria-hidden="true" /> {t.newGoal}
-          </Btn>
-        </div>
-      ) : (
-        <div className="tp-teams">
-          {liveGoals.length > 0 && (
-            <div className="tp-goals-section">
-              <div className="tp-section-head">{t.liveGoals} · {liveGoals.length}</div>
-              {liveGoals.map(goal => (
-                <GoalCard key={goal.lead.slot.key} goal={goal} loops={loops} onOpen={onOpen} />
-              ))}
-            </div>
-          )}
-          {archivedGoals.length > 0 && (
-            <div className="tp-goals-section">
-              <div className="tp-section-head">{t.archivedGoals} · {archivedGoals.length}</div>
-              {archivedGoals.map(goal => (
-                <GoalCard key={goal.lead.slot.key} goal={goal} loops={loops} onOpen={onOpen} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      <SubscriptionsSection
-        subs={subscriptions}
-        schedules={schedules}
-        // Add-subscription drafts into the project's lead session, so it needs a
-        // live lead to open. A project with only archived goals (no live lead)
-        // has no session to seed the draft into, so the button is hidden there.
-        canAdd={liveGoals.length > 0}
-        onOpen={onOpen}
-        onAdd={() => onAddSubscription(p)}
-      />
-
-      <LibrarySection
-        prs={library.prs}
-        artifacts={library.artifacts}
-        files={library.files}
-        filesAvailable={library.filesAvailable}
-        loading={library.loading}
-        error={library.error}
-        onOpenArtifact={onOpenArtifact}
-      />
-    </div>
-  )
+        {p.needsDir && <p className="tp-muted tp-fold-sub">{t.setDirectoryBody}</p>}
+        <Btn className="tp-btn-ghost" onClick={onSettings}>
+          <Settings size={13} className="lucide-inline" aria-hidden="true" /> {t.folderSettings}
+        </Btn>
+      </section>
+    ),
+    subscriptions: (
+      <section className="tp-tabsec" aria-label={t.subscriptions}>
+        <SubscriptionsSection
+          compact
+          subs={subscriptions}
+          schedules={schedules}
+          // Add-subscription drafts into the project's lead session, so it
+          // needs a live lead to open; hidden when every goal is archived.
+          canAdd={hasLiveGoal}
+          onOpen={onOpen}
+          onAdd={onAddSubscription}
+        />
+      </section>
+    ),
+    library: (
+      <section className="tp-tabsec" aria-label={t.library}>
+        <LibrarySection
+          compact
+          artifacts={library.artifacts}
+          files={library.files}
+          filesAvailable={library.filesAvailable}
+          artifactsState={library.artifactsState}
+          filesState={library.filesState}
+          onOpenArtifact={onOpenArtifact}
+        />
+      </section>
+    ),
+  }
 }
 
 /** Everything the Library section needs for one project, derived in the
  *  top-level component from the host queries. */
 interface LibraryData {
-  prs: SourceLink[]
   artifacts: LibraryArtifact[]
   files: SessionDoc[]
   /** False when the project has no folder id to scope the artifact listing to
    *  — the files view then shows its unavailable state. */
   filesAvailable: boolean
-  loading: boolean
-  error: string
+  artifactsState: GroupState
+  filesState: GroupState
 }
 
 interface NewProjectResult {
@@ -805,75 +608,24 @@ function NewProjectDialog({
   )
 }
 
-/** The icon and badge variant for each inbox kind. A pending approval and a
- *  needs-input both use the warm `warn` token (a decision the person owes); a
- *  stalled session uses the `err` token (something stopped). */
-const INBOX_KIND: Record<InboxKind, { Icon: typeof BellRing; variant: 'warn' | 'err' }> = {
-  approval: { Icon: BellRing, variant: 'warn' },
-  needs_input: { Icon: CircleHelp, variant: 'warn' },
-  stalled: { Icon: PauseCircle, variant: 'err' },
-}
-
-/** One row in the Waiting-on-you inbox: the project it belongs to, the session
- *  and what it waits for, opening that session on click. */
-function InboxRow({ item, onOpen }: { item: InboxItem; onOpen: (key: string) => void }) {
-  const { Icon, variant } = INBOX_KIND[item.kind]
+/** The page header's one-line "N need you" chip: the only trace above the
+ *  columns of sessions waiting on the person. The rows themselves live in the
+ *  Overview tab's Needs you section; the chip takes the person there. Never
+ *  more than one line, so the columns below keep the viewport's height. */
+export function NeedsChip({ count, onOpen }: { count: number; onOpen: () => void }) {
+  if (count <= 0) return null
   return (
-    <Clickable
-      className={`tp-inbox-row tp-inbox-${item.kind}`}
-      onClick={() => onOpen(item.slotKey)}
-      aria-label={t.inboxOpen(item.projectName, item.sessionTitle || t.untitled)}
-    >
-      <Icon size={15} className="tp-inbox-ico" aria-hidden="true" />
-      <div className="tp-inbox-main">
-        <div className="tp-row-top">
-          <span className="tp-inbox-session">{item.sessionTitle || t.untitled}</span>
-          <Badge variant={variant}>{t.inboxBadge[item.kind]}</Badge>
-        </div>
-        <div className="tp-muted tp-ellipsis">
-          {item.projectName} · {t.inboxWaiting[item.kind]}
-        </div>
-        {item.lastMessage && <div className="tp-muted tp-ellipsis tp-inbox-msg">{item.lastMessage}</div>}
-      </div>
-      {item.updated && <span className="tp-muted tp-nowrap">{when(item.updated)}</span>}
-    </Clickable>
+    <button type="button" className="tp-needschip" onClick={onOpen} aria-label={t.needsChipLabel(count)}>
+      <BellRing size={13} aria-hidden="true" /> {count}<span className="tp-needschip-word">{t.needsChipWord(count)}</span>
+    </button>
   )
 }
 
-/** The Waiting-on-you inbox: a cross-project roll-up of every session that
- *  needs the person, rendered at the TOP of the page. Compact when empty (a
- *  calm one-line note, not an error, and it does not push the page down). */
-function InboxBar({ items, onOpen }: { items: InboxItem[]; onOpen: (key: string) => void }) {
-  if (items.length === 0) {
-    return (
-      <section className="tp-inbox tp-inbox-empty" aria-label={t.inboxTitle}>
-        <CheckCircle2 size={15} className="tp-inbox-empty-ico" aria-hidden="true" />
-        <div className="tp-inbox-empty-body">
-          <span className="tp-inbox-empty-title">{t.inboxEmpty}</span>
-          <span className="tp-muted">{t.inboxEmptyHint}</span>
-        </div>
-      </section>
-    )
-  }
-  return (
-    <section className="tp-inbox" aria-label={t.inboxTitle}>
-      <div className="tp-inbox-head">
-        <Inbox size={15} aria-hidden="true" />
-        <h2 className="tp-inbox-title">{t.inboxTitle}</h2>
-        <span className="tp-muted">{t.inboxCount(items.length)}</span>
-      </div>
-      <div className="tp-inbox-list" role="list">
-        {items.map(item => (
-          <div role="listitem" key={item.slotKey}>
-            <InboxRow item={item} onOpen={onOpen} />
-          </div>
-        ))}
-      </div>
-    </section>
-  )
-}
-
-export default function ProjectHub() {
+/** `boardSource` reads a goal lead's work ledger for the right column's task
+ *  board. The host mounts the app with no props, and today no host route serves
+ *  a session's work ledger to an app, so in production it is absent and each
+ *  goal shows its sessions tree. The dev harness passes a fixture source. */
+export default function ProjectHub({ boardSource }: { boardSource?: BoardSource } = {}) {
   const api = useAppApi()
   const qc = useQueryClient()
   const { active } = useAppInfo()
@@ -884,6 +636,7 @@ export default function ProjectHub() {
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
   const visible = active !== false
+  const layout = usePanelLayout()
 
   const foldersQ = useQuery({
     queryKey: ['project-hub', 'folders'],
@@ -915,18 +668,27 @@ export default function ProjectHub() {
   // ?session scope). Filtered to the selected project's own sessions in the
   // client via projectSessionKeys — the endpoint has no folder scope, so one
   // unscoped fetch + a client filter is cheaper than one call per session.
-  // Polled on the slow cadence: a document file changes only when an agent
-  // writes one, not every turn.
+  // The host answers it by reading EVERY session's history (about 13 s on a
+  // ~530-session install), so it is polled once a minute, never retried in a
+  // burst, and given up on after DOCS_TIMEOUT_MS: the Library's files group
+  // then says the scan did not finish instead of sitting on a placeholder.
   const docsQ = useQuery({
     queryKey: ['project-hub', 'session-docs'],
-    queryFn: () => api.get<{ docs: SessionDoc[] }>('/api/artifacts/session-docs'),
-    refetchInterval: visible ? POLL_MS * 4 : false,
+    queryFn: ({ signal }) =>
+      api.get<{ docs: SessionDoc[] }>('/api/artifacts/session-docs', { signal: withTimeout(signal, DOCS_TIMEOUT_MS) }),
+    enabled: visible,
+    refetchInterval: visible ? 60_000 : false,
+    staleTime: 30_000,
+    retry: false,
   })
   // A slots push is a cheap hint to refresh sooner than the poll.
   useAppEvents('slots', () => {
     void slotsQ.refetch()
     void foldersQ.refetch()
     void sessionsQ.refetch()
+    // The approval-mode picker's host status read (global YOLO): a mode
+    // changed in the dashboard pushes a slots frame, so the picker follows it.
+    void qc.invalidateQueries({ queryKey: STATUS_QUERY_KEY })
   })
 
   const createProject = useMutation({
@@ -936,11 +698,7 @@ export default function ProjectHub() {
       // Today's core ignores the extra field and keeps the first directory as
       // project_dir — the app degrades cleanly either way. The default agent is
       // always the team lead; the app never writes steering_dirs.
-      const [first, ...rest] = directories
-      const body: Record<string, unknown> = { name, default_agent: TEAM_LEAD_AGENT }
-      if (first) body.project_dir = first
-      if (rest.length) body.extra_repos = rest
-      return api.post<Folder>('/api/chat/folders', body)
+      return api.post<Folder>('/api/chat/folders', newProjectRequest(name, directories))
     },
     onSuccess: created => {
       setCreating(false)
@@ -976,10 +734,15 @@ export default function ProjectHub() {
     )
   }, [projects, filter])
   const current = shown.find(p => p.folder.id === selected) ?? shown[0] ?? null
-  // The Waiting-on-you inbox rolls up EVERY project (not the filtered list) —
-  // what needs you must not be hidden by a search filter. Built from the same
-  // projects, so a session enters it exactly once.
-  const inbox = useMemo(() => buildInbox(projects), [projects])
+  // Sessions waiting on the person, per project, counted by the SAME
+  // derivation the Overview tab's Needs you list draws from, so the header
+  // chip and the list never disagree. Over EVERY project (not the filtered
+  // list): what needs you must not be hidden by a search filter.
+  const needsByProject = useMemo(
+    () => projects.map(p => ({ id: p.folder.id, n: buildOverview(p).needs.length })).filter(x => x.n > 0),
+    [projects],
+  )
+  const needsTotal = needsByProject.reduce((sum, x) => sum + x.n, 0)
 
   // Library artifacts for the CURRENT project: the host resolves the folder
   // subtree server-side from ?chat_folder, returning every artifact its chats
@@ -997,24 +760,24 @@ export default function ProjectHub() {
   })
 
   const library: LibraryData = useMemo(() => {
+    const idle: GroupState = { loading: false, error: '' }
     if (!current) {
-      return { prs: [], artifacts: [], files: [], filesAvailable: false, loading: false, error: '' }
+      return { artifacts: [], files: [], filesAvailable: false, artifactsState: idle, filesState: idle }
     }
     const ownedKeys = projectSessionKeys(current.goals)
-    const prs = dedupeProjectPrs(current.goals)
     const filesAvailable = currentFolderId !== ''
     const allDocs = Array.isArray(docsQ.data?.docs) ? (docsQ.data as { docs: SessionDoc[] }).docs : []
     const allArtifacts = Array.isArray(artifactsQ.data?.artifacts)
       ? (artifactsQ.data as ArtifactsPage).artifacts
       : []
-    const err = artifactsQ.error || docsQ.error
     return {
-      prs,
       artifacts: projectArtifacts(allArtifacts),
       files: projectOutputFiles(allDocs, ownedKeys),
       filesAvailable,
-      loading: filesAvailable && (artifactsQ.isLoading || docsQ.isLoading),
-      error: err ? String((err as Error).message || err) : '',
+      // Each group from its OWN query: rows already received keep showing
+      // through a later failed refresh, and a first load that failed says so.
+      artifactsState: groupState(artifactsQ.data, artifactsQ.error, artifactsQ.isLoading),
+      filesState: groupState(docsQ.data, docsQ.error, docsQ.isLoading),
     }
   }, [current, currentFolderId, artifactsQ.data, artifactsQ.error, artifactsQ.isLoading, docsQ.data, docsQ.error, docsQ.isLoading])
 
@@ -1053,6 +816,17 @@ export default function ProjectHub() {
   )
 
   const openSession = (slotKey: string) => openChat({ slotKey })
+  // The header chip: show the Overview tab of the current project when it has
+  // sessions waiting, else of the first project that does, and reopen the
+  // side panel if it was collapsed.
+  const openNeeds = () => {
+    const target = needsByProject.find(x => x.id === current?.folder.id) ?? needsByProject[0]
+    if (!target) return
+    if (!shown.some(p => p.folder.id === target.id)) setFilter('')
+    setSelected(target.id)
+    layout.setTab('overview')
+    if (layout.prefs.collapsed) layout.toggleCollapsed()
+  }
   // Open an artifact at the host's read-only detail page (/artifacts/<slug>).
   // The app only LINKS to it — it never materializes, mutates or re-files it,
   // and sends no message.
@@ -1068,15 +842,12 @@ export default function ProjectHub() {
   // session: this is a brand-new slot it is creating.
   const newGoal = useMutation({
     mutationFn: (p: FolderProject) =>
-      api.post<Slot>('/api/chat/slots', {
-        agent: p.defaultAgent || TEAM_LEAD_AGENT,
-        folder_id: p.folder.id,
-      }),
-    onSuccess: (slot, p) => {
+      api.post<Slot>('/api/chat/slots', newGoalRequest(p)),
+    onSuccess: slot => {
       void qc.invalidateQueries({ queryKey: ['project-hub', 'slots'] })
       // Land the person in the freshly-created, still-empty session. autoSend
       // is irrelevant with no message — the draft is the empty composer.
-      openChat({ slotKey: slot?.key, agent: p.defaultAgent || TEAM_LEAD_AGENT, autoSend: false })
+      openChat(newGoalLaunch(slot?.key))
     },
   })
   const openNewGoal = (p: FolderProject) => newGoal.mutate(p)
@@ -1094,7 +865,8 @@ export default function ProjectHub() {
     if (!lead?.key) return
     openChat({
       slotKey: lead.key,
-      agent: lead.agent || p.defaultAgent || TEAM_LEAD_AGENT,
+      // An existing lead keeps its own agent; never the folder default.
+      agent: lead.agent || TEAM_LEAD_AGENT,
       message: t.addSubscriptionDraft,
       autoSend: false,
     })
@@ -1107,7 +879,11 @@ export default function ProjectHub() {
   const openSettings = (_p: FolderProject) => navigate('/chat')
 
   const loadError = foldersQ.error || slotsQ.error
-  const loading = foldersQ.isLoading || slotsQ.isLoading
+  // `isPending` = no answer yet (in flight, paused offline, or retrying). The
+  // loops read is in the gate too: without it every lead first paints Idle
+  // with no loop line and then flips to Working once loops land. A failed
+  // loops read is an answer (no loops), so it never holds the page.
+  const loading = foldersQ.isPending || slotsQ.isPending || loopsQ.isPending
 
   return (
     <>
@@ -1116,27 +892,44 @@ export default function ProjectHub() {
         title={t.projects}
         subtitle={t.projectsSubtitle}
         actions={
+          <>
+          <NeedsChip count={needsTotal} onOpen={openNeeds} />
           <Btn primary onClick={() => { setCreateError(''); setCreating(true) }}>
             <Plus size={14} className="lucide-inline" aria-hidden="true" /> {t.newProjectTitle}
           </Btn>
+          </>
         }
       />
       <div className="tp-root">
         {loadError ? (
           <ErrorNotice title={t.foldersLoadError} message={String((loadError as Error).message || loadError)} askAgent />
         ) : loading ? (
-          <div className="tp-loading"><Skeleton className="tp-skel" /><Skeleton className="tp-skel" /><Skeleton className="tp-skel" /></div>
+          // The loaded grid's own columns, widths and open tab, so the page
+          // does not jump when the data arrives.
+          <PageSkeleton
+            widths={layout.widths}
+            collapsed={layout.prefs.collapsed}
+            tab={layout.prefs.tab}
+            onTab={layout.setTab}
+            onToggleCollapsed={layout.toggleCollapsed}
+          />
         ) : projects.length === 0 ? (
           <EmptyState
             icon={<FolderKanban size={28} />}
             title={t.projectsEmptyTitle}
             subtitle={t.projectsEmptyBody}
-            action={<Btn primary onClick={() => { setCreateError(''); setCreating(true) }}>{t.newProjectTitle}</Btn>}
+            // Secondary: the page header's "New project" is already the
+            // primary in this viewport.
+            action={<Btn onClick={() => { setCreateError(''); setCreating(true) }}>{t.newProjectTitle}</Btn>}
           />
         ) : (
-          <>
-          <InboxBar items={inbox} onOpen={openSession} />
-          <div className="tp-split">
+          <div
+            ref={layout.splitRefCb}
+            className={`tp-split${current && layout.prefs.collapsed ? ' tp-split-collapsed' : ''}${layout.dragging ? ' tp-split-resizing' : ''}`}
+            style={{ '--tp-col-l': `${layout.widths.left}px`, '--tp-col-r': `${layout.widths.right}px` } as CSSProperties}
+          >
+            <ColumnGrabber side="left" layout={layout} />
+            {current && !layout.prefs.collapsed && <ColumnGrabber side="right" layout={layout} />}
             <aside className="tp-list" aria-label={t.projects}>
               <SearchInput value={filter} onChange={e => setFilter(e.target.value)} placeholder={t.searchProjects} aria-label={t.searchProjects} />
               {shown.length === 0 && <p className="tp-muted tp-pad">{t.noProjectMatch}</p>}
@@ -1149,27 +942,36 @@ export default function ProjectHub() {
                 />
               ))}
             </aside>
-            <main className="tp-main">
-              {current ? (
-                <ProjectPage
-                  key={current.folder.id}
-                  p={current}
-                  loops={loops}
-                  library={library}
-                  subscriptions={subscriptions}
-                  schedules={schedules}
-                  onOpen={openSession}
-                  onOpenArtifact={openArtifact}
-                  onNewGoal={openNewGoal}
-                  onSettings={openSettings}
-                  onAddSubscription={addSubscription}
-                />
-              ) : (
-                <p className="tp-muted">{t.selectProjectHint}</p>
-              )}
-            </main>
+            {current ? (
+              <Workspace
+                key={current.folder.id}
+                p={current}
+                slotsByKey={slotsByKey}
+                boardSource={boardSource}
+                visible={visible}
+                onOpenFull={openSession}
+                onNewGoal={() => openNewGoal(current)}
+                onSettings={() => openSettings(current)}
+                onOpenArtifact={openArtifact}
+                tab={layout.prefs.tab}
+                onTab={layout.setTab}
+                collapsed={layout.prefs.collapsed}
+                onToggleCollapsed={layout.toggleCollapsed}
+                panes={projectPanes({
+                  p: current,
+                  library,
+                  subscriptions,
+                  schedules,
+                  onOpen: openSession,
+                  onOpenArtifact: openArtifact,
+                  onSettings: () => openSettings(current),
+                  onAddSubscription: () => addSubscription(current),
+                })}
+              />
+            ) : (
+              <p className="tp-muted tp-pad">{t.selectProjectHint}</p>
+            )}
           </div>
-          </>
         )}
       </div>
 

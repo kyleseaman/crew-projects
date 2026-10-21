@@ -1,6 +1,6 @@
 {
   "name": "project-hub",
-  "version": "0.4.2",
+  "version": "0.9.4",
   "minKiroCrewVersion": "0.10.0",
   "displayName": "Projects",
   "description": "Projects as folders: repositories, default agent and instructions, every team-lead goal with its team, a Library, subscriptions, and what is waiting on you.",
@@ -23,15 +23,21 @@
   },
   "permissions": {
     "api": [
+      "/api/chat",
       "/api/chat/slots",
       "/api/chat/folders",
       "/api/autonudge",
       "/api/sessions",
       "/api/artifacts",
-      "/api/project-schedules"
+      "/api/project-schedules",
+      "/api/upload/file",
+      "/api/slash-commands",
+      "/api/file-search",
+      "/api/status"
     ],
     "events": [
       "slots"
-    ]
+    ],
+    "sessionApproval": true
   }
 }

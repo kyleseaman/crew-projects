@@ -64,6 +64,9 @@ const parserProject: Slot[] = [
     running: false,
     last_activity_ts: ago(3),
     last_message: 'Round 3 corrections merged. Patrolling the two open items.',
+    // The host's waiting_for_input: idle and the lead spoke last, so the
+    // Overview may quote it.
+    waiting_for_input: true,
     source_links: [PR(4506, { ci: 'passed', state: 'merged' })],
     // Linked to a Slack channel: the lead watches it and dispatches a goal for
     // each report -> a `slack` subscription row on the project.
@@ -111,6 +114,7 @@ const parserProject: Slot[] = [
     pending_approval: true,
     last_activity_ts: ago(2),
     last_message: 'Needs approval to force-push the review fixup.',
+    pending_approval_info: { tool: 'git push --force-with-lease', tool_kind: 'execute' },
     source_links: [PR(4512, { ci: 'failed' })],
   },
   // A SECOND live goal in the same project, so the live-goals section shows
@@ -162,6 +166,7 @@ const brakingProject: Slot[] = [
     running: false,
     last_activity_ts: ago(8),
     last_message: 'Wave 1 dispatched. Loop will pick up wave 2 as PRs merge.',
+    waiting_for_input: true,
   },
   {
     key: 'W-corner',
@@ -223,6 +228,35 @@ const codexProject: Slot[] = [
   },
 ]
 
+/** A project shaped like the owner's REAL "Slack Code" sidebar (2026-10-19):
+ *  a team lead whose conductor is filed in a nested conductor subfolder, and
+ *  FIVE sub-conductors two levels below the goal (the 0.7 bug showed them as
+ *  plain workers and hid conductor-led goals). Lineage rides the host's
+ *  `parent: { slot, key }` edge exactly as /api/chat/slots serializes it.
+ *  Several sessions wait on the person, so the page has 6+ waiting sessions
+ *  overall (the 0.7 "Waiting on you" list that squeezed the columns). */
+const lin = (key: string) => ({ created_by: key, parent: { slot: key, key } })
+// The lead is IDLE between patrol cycles (its loop at 26/80 is active) while
+// sessions under it wait or stalled: the owner's 0.9.1 report, where the
+// header pill read the tree's worst state ("Stalled") as the lead's.
+const slackProject: Slot[] = [
+  { key: 'L-slack', agent: 'kirocrew-team-lead', folder_id: 'f-slack', title: 'Slack Code: redactor sink registration', last_activity_ts: ago(22),
+    waiting_for_input: true, last_message: 'Two of five sub-conductors landed. Next: rebase #21650 once main is green.',
+    source_links: [PR(21650, { state: 'open', ci: 'failed' }), PR(21651, { state: 'open', ci: 'failed' })] },
+  { key: 'C-runtime', agent: 'kirocrew-conductor', folder_id: 'f-slack-runtime', ...lin('L-slack'), title: 'Code channels runtime', running: true, last_activity_ts: ago(3),
+    source_links: [PR(21640, { state: 'merged', ci: 'passed' })] },
+  { key: 'C-sink', agent: 'kirocrew-conductor', folder_id: 'f-slack-runtime-w', ...lin('C-runtime'), title: 'Sink registry wiring', pending_approval: true, pending_approval_info: { tool: 'pytest tests/redactor', tool_kind: 'execute' }, last_activity_ts: ago(4) },
+  { key: 'C-scrub', agent: 'kirocrew-conductor', folder_id: 'f-slack-runtime-w', ...lin('C-runtime'), title: 'Scrubber parity', interrupted: true, last_activity_ts: ago(26) },
+  { key: 'C-threads', agent: 'kirocrew-conductor', folder_id: 'f-slack-runtime-w', ...lin('C-runtime'), title: 'Thread reply routing', running: true, last_activity_ts: ago(6),
+    source_links: [PR(21655, { state: 'open', ci: 'running' })] },
+  { key: 'C-files', agent: 'kirocrew-conductor', folder_id: 'f-slack-runtime-w', ...lin('C-runtime'), title: 'File upload redaction', pending_approval: true, pending_approval_info: { tool: 'Edit redact_upload.py', tool_kind: 'edit' }, last_activity_ts: ago(9) },
+  { key: 'C-limits', agent: 'kirocrew-conductor', folder_id: 'f-slack-runtime-w', ...lin('C-runtime'), title: 'Rate-limit backoff', last_activity_ts: ago(40) },
+  { key: 'W-sec-test', agent: 'kirocrew-worker', folder_id: 'f-slack-runtime-w', ...lin('C-runtime'), title: 'Fix test_security_posture', needs_input: true, last_activity_ts: ago(7) },
+  { key: 'W-slack-docs', agent: 'kirocrew-worker', folder_id: 'f-slack-w', ...lin('L-slack'), title: 'Docs: Slack Code setup', last_activity_ts: ago(50),
+    source_links: [PR(21630, { state: 'closed' })] },
+  { key: 'W-slack-i18n', agent: 'kirocrew-worker', folder_id: 'f-slack', ...lin('L-slack'), title: 'Locale strings for channel errors', running: true, last_activity_ts: ago(1) },
+]
+
 /** Sessions that are NOT root team-leads, to prove the grouping ignores them
  *  (a plain chat and an orphaned worker with a dangling parent). */
 const noise: Slot[] = [
@@ -234,8 +268,11 @@ export const slotsFixture: Slot[] = [
   ...parserProject,
   ...brakingProject,
   ...codexProject,
+  ...slackProject,
   ...noise,
-]
+  // Every host slot row carries its approval posture (slot_projection.to_dict:
+  // trust / trust_scope / trust_reads); default it to Normal as the host does.
+].map(s => ({ trust: false, trust_scope: '', trust_reads: false, ...s }))
 
 /** A variant of the slot list with NOTHING waiting on the person: every
  *  pending_approval / needs_input / interrupted flag cleared (a waiting session
@@ -457,6 +494,9 @@ export const loopsFixture: Loop[] = [
   { id: 'lp-ref', slot_key: 'C-ref', active: true, cycle_count: 2, idle_secs: 900, next_due_ts: sec(-11), last_fire_ts: sec(4) },
   // Parsers perf lead: a bounded monitor loop with progress against a cap.
   { id: 'lp-perf', slot_key: 'L-parsers-perf', active: true, cycle_count: 18, max_cycles: 200, idle_secs: 3600, next_due_ts: sec(-50) },
+  // Slack Code lead: idle between cycles of an active patrol loop, so its own
+  // status reads Working whatever the sessions under it are doing.
+  { id: 'lp-slack', slot_key: 'L-slack', active: true, cycle_count: 26, max_cycles: 80, idle_secs: 1800, next_due_ts: sec(-8), last_fire_ts: sec(22) },
 ]
 
 export const autonudgeFixture: { enabled: boolean; loops: Loop[] } = {
@@ -508,6 +548,11 @@ export const foldersFixture: Folder[] = [
     default_agent: 'kirocrew-team-lead',
     history_count: 1,
   },
+  { id: 'f-slack', name: 'Slack Code', parent_id: null, project_dir: '/Users/kyle/Development/KiroCrew', default_agent: 'kirocrew-team-lead', history_count: 6 },
+  { id: 'f-slack-w', name: 'kirocrew-worker', parent_id: 'f-slack' },
+  { id: 'f-slack-c', name: 'kirocrew-conductor', parent_id: 'f-slack' },
+  { id: 'f-slack-runtime', name: 'Code channels runtime', parent_id: 'f-slack-c' },
+  { id: 'f-slack-runtime-w', name: 'kirocrew-worker', parent_id: 'f-slack-runtime' },
   {
     id: 'f-unset',
     name: 'Mobile companion app',
@@ -535,4 +580,109 @@ const schedulesByFolder: Record<string, unknown[]> = {
 export function schedulesForFolder(folderId: string): unknown[] {
   const kids = folderId === 'f-parsers' ? ['f-parsers-ref'] : []
   return [folderId, ...kids].flatMap(id => schedulesByFolder[id] ?? [])
+}
+
+/** A short recent transcript for the harness's ChatEmbed stub, keyed by lead
+ *  slot. Mirrors the role/content rows GET /api/chat/slots/{slot} returns. Any
+ *  other slot gets a generic two-turn exchange ending on its last_message. */
+export interface TranscriptRow {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+const LEAD_TRANSCRIPTS: Record<string, TranscriptRow[]> = {
+  'L-parsers': [
+    { role: 'user', content: 'Kick off the parser verification round. Start with the WASM parser audit, then integrate it.' },
+    { role: 'assistant', content: 'Dispatched a sub-conductor for the reference verification (audit, then integration) and a worker for the owner review findings.' },
+    { role: 'user', content: 'How did the audit go?' },
+    { role: 'assistant', content: 'Audit landed clean: the WASM parser matches the reference on all 42 recorded sessions. Integration is under way.' },
+    { role: 'user', content: 'Where are we on the parser round?' },
+    { role: 'assistant', content: 'Round 3 corrections merged (#4506). Two items still open: the lap-split fix is waiting on your approval, and the GPS drift worker is re-running CI.' },
+    { role: 'user', content: 'Approve the lap-split one once CI is green.' },
+    { role: 'assistant', content: 'Will do. Patrolling the two open items — I will post here when either lands.' },
+  ],
+}
+
+/* ---------------------------------------------------------------------------
+ * Work ledgers for the harness's `?board=1` mode. A real host serves no
+ * app-readable ledger route today, so the app only draws its task board when
+ * handed a BoardSource; the harness hands it this one to show the board.
+ * Shaped like WorkItem.to_dict(): item_id, title, state, status, reason,
+ * summary, worker_session_key.
+ * ------------------------------------------------------------------------- */
+const LEDGERS: Record<string, { items: Array<Record<string, unknown>> }> = {
+  'L-parsers': {
+    items: [
+      {
+        item_id: 'it_ref00001',
+        title: 'Reference parser verification',
+        state: 'open',
+        status: 'progress',
+        summary: 'Audit accepted; integration worker running the replay suite.',
+        worker_session_key: 'C-ref',
+      },
+      {
+        item_id: 'it_corr0002',
+        title: 'Resolve owner review findings',
+        state: 'open',
+        status: 'blocked',
+        reason: 'approval',
+        summary: 'Lap-split fix ready; push waits on a tool approval.',
+        worker_session_key: 'W-correct',
+      },
+      {
+        item_id: 'it_gps00003',
+        title: 'Pick the GPS drift approach',
+        state: 'open',
+        status: 'question',
+        reason: 'needs_human',
+        summary: 'Kalman smoothing or a raw-fix fallback? Both pass CI.',
+      },
+      {
+        item_id: 'it_r3000004',
+        title: 'Land round 3 corrections',
+        state: 'accepted',
+        status: 'done',
+        summary: 'Merged in #4506, checks green.',
+      },
+    ],
+  },
+  // The sub-conductor's own ledger, drawn one level under its task.
+  'C-ref': {
+    items: [
+      {
+        item_id: 'it_aud00011',
+        title: 'Audit telemetry-core WASM parser',
+        state: 'accepted',
+        status: 'done',
+        summary: 'Matches the reference on 42 of 42 sessions.',
+        worker_session_key: 'W-audit',
+      },
+      {
+        item_id: 'it_int00012',
+        title: 'Integrate confirmed WASM parser',
+        state: 'open',
+        status: 'progress',
+        summary: 'Replay suite 31 of 42 green so far.',
+        worker_session_key: 'W-integ',
+      },
+    ],
+  },
+}
+
+/** Harness BoardSource: a conductor's fixture ledger, or null when it owns none
+ *  (every other goal then falls back to its sessions tree). */
+export async function boardSourceFixture(conductorKey: string) {
+  const ledger = LEDGERS[conductorKey]
+  return ledger ? (ledger as unknown as import('../model').LedgerRead) : null
+}
+
+export function leadTranscriptFor(slotKey: string): TranscriptRow[] {
+  const known = LEAD_TRANSCRIPTS[slotKey]
+  if (known) return known
+  const slot = slotsFixture.find(s => s.key === slotKey)
+  return [
+    { role: 'user', content: 'Quick status?' },
+    { role: 'assistant', content: slot?.last_message || 'Nothing new since the last check.' },
+  ]
 }
